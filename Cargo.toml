@@ -1,0 +1,12 @@
+[package]
+name = "look-lang"
+version = "0.1.0"
+authors = ["AljoschaMeyer <mail@aljoscha-meyer.de>"]
+license = "AGPL-3.0"
+
+[dependencies]
+regex = "0.2"
+
+[dependencies.nom]
+version = "4.0.0-beta2"
+features = ["regexp"]
