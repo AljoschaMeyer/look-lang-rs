@@ -34,6 +34,7 @@ macro_rules! fails {
     }
 }
 
+pub mod attributes;
 pub mod whitespace;
 pub mod identifiers;
 pub mod types;

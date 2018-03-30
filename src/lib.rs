@@ -25,7 +25,7 @@ enum Macro {
 
 enum InlineType {
     Id(Identifier),
-    Void,
+    Void, // XXX
     Fun {
         args: Vec<InlineType>,
         ret: Box<InlineType>,
@@ -33,16 +33,15 @@ enum InlineType {
     Pointer {
         inner: Box<InlineType>,
         mutable: bool,
-    }, // points to a single thing, can be dereferenced
-    ArrayType(Box<InlineType>), // zero or more of a type (has no static size)
+    }, // points to a single thing, can be dereferenced XXX
+    ArrayType(Box<InlineType>), // zero or more of a type (has no static size) XXX
     ProductAnon(Vec<InlineType>),
     ProductNamed(Vec<(SimpleIdentifier, InlineType)>),
-    ProductRepeated(Box<InlineType>, u64), // `(Bool; 42)`
+    ProductRepeated(Box<InlineType>, u64), // `(Bool; 42)` XX
     TypeLevelApplication(Identifier, Vec<InlineType>),
     TypeLevelApplicationNamed(Identifier, Vec<(SimpleIdentifier, InlineType)>),
-    Typeof(Box<Expression>),
     MacroInv(Identifier),
-    Attributed(Box<Attribute>, Box<InlineType>),
+    Attributed(Box<Attribute>, Box<InlineType>), // XXX
 }
 
 enum DefinedType {
