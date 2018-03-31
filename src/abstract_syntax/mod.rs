@@ -2,6 +2,8 @@
 use nom_locate::LocatedSpan;
 use nom::AsBytes;
 
+type Span<'a> = LocatedSpan<&'a str>;
+
 /// A position in the input. Lines and columns start at 1.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Position {
@@ -60,6 +62,49 @@ macro_rules! fails {
             }
         }
     }
+}
+
+named!(pub p_skip0<Span, ()>, map!(
+    many0!(alt!(
+        map!(one_of!(" \n"), |_| ()) |
+        do_parse!(
+            tag!("//") >>
+            many0!(none_of!("\n")) >>
+            tag!("\n") >>
+            (())
+        )
+    )), |_| ()));
+
+named!(pub p_skip1<Span, ()>, map!(
+    many1!(alt!(
+        map!(one_of!(" \n"), |_| ()) |
+        do_parse!(
+            tag!("//") >>
+            many0!(none_of!("\n")) >>
+            tag!("\n") >>
+            (())
+        )
+    )), |_| ()));
+
+#[test]
+fn test_ignored() {
+    fails!(p_skip1, "");
+    fails!(p_skip1, "a");
+    works!(p_skip0, "", 0);
+    works!(p_skip0, "a", 1);
+
+    fails!(p_skip1, "\r");
+    fails!(p_skip1, "\t");
+
+    fails!(p_skip0, "//");
+
+    works!(p_skip1, "//\n", 0);
+    works!(p_skip1, "// \n", 0);
+    works!(p_skip1, "///\n", 0);
+    works!(p_skip1, "////\n", 0);
+    works!(p_skip1, "//\n//\n", 0);
+    works!(p_skip1, "//\na", 1);
+    works!(p_skip0, "// \rö\n   /// /\n a", 1);
 }
 
 pub mod identifiers;
