@@ -1,0 +1,65 @@
+//! An abstract syntax tree with line/column markers, which owns its data.
+use nom_locate::LocatedSpan;
+use nom::AsBytes;
+
+/// A position in the input. Lines and columns start at 1.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Position {
+    start_line: u32,
+    start_col: usize,
+    end_line: u32,
+    end_col: usize,
+}
+
+impl Position {
+    fn new<T: AsBytes>(start: LocatedSpan<T>, end: LocatedSpan<T>) -> Position {
+        Position {
+            start_line: start.line,
+            start_col: start.get_column_utf8().unwrap(),
+            end_line: end.line,
+            end_col: end.get_column_utf8().unwrap(),
+        }
+    }
+
+    pub fn start_line(&self) -> u32 {
+        self.start_line
+    }
+
+    pub fn start_col(&self) -> usize {
+        self.start_col
+    }
+
+    pub fn end_line(&self) -> u32 {
+        self.end_line
+    }
+
+    pub fn end_col(&self) -> usize {
+        self.end_col
+    }
+}
+
+#[cfg(test)]
+macro_rules! works {
+    ($parser:expr, $input:expr, $exp:expr) => {
+        {
+            if let ::nom::IResult::Done(i, _) = $parser(::nom_locate::LocatedSpan::new($input)) {
+                assert!(i.fragment.len() == $exp);
+            } else {
+                panic!("parser did not succeed");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+macro_rules! fails {
+    ($parser:expr, $input:expr) => {
+        {
+            if let ::nom::IResult::Done(_, _) = $parser(::nom_locate::LocatedSpan::new($input)) {
+                panic!("parser succeeded");
+            }
+        }
+    }
+}
+
+pub mod identifiers;

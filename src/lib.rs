@@ -1,8 +1,10 @@
 #[macro_use]
 extern crate nom;
-extern crate regex;
+#[macro_use(position)]
+extern crate nom_locate;
 
 pub mod concrete_syntax;
+pub mod abstract_syntax;
 
 struct SimpleIdentifier(String);
 
@@ -65,7 +67,7 @@ enum Expression {
     IntLitBin(IntLiteralBin),
     IntLitHex(IntLiteralHex),
     Reference(Box<Expression>, bool), // true: mutable, false: immutable (default)
-    Dereference(Box<Expression>),
+    Dereference(Box<Expression>), // TODO mutability?
     Array(Vec<Expression>),
     Indexing {
         indexee: Box<Expression>,
@@ -110,6 +112,7 @@ enum Expression {
     FunLiteral(Vec<(SimpleIdentifier, bool, InlineType)>, Vec<Statement>), // bool is mutability
     MacroInv(Identifier),
     Attributed(Box<Attribute>, Box<Expression>),
+    // TODO assignment, also `+=` etc?
 }
 
 enum Statement {
