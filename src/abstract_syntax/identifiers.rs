@@ -19,6 +19,22 @@ pub enum Identifier {
     Compound(SimpleIdentifier, Box<Identifier>, Position),
 }
 
+impl Identifier {
+    pub fn is_simple(&self) -> bool {
+        match self {
+            &Identifier::Simple(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_compound(&self) -> bool {
+        match self {
+            &Identifier::Compound(_, _, _) => true,
+            _ => false,
+        }
+    }
+}
+
 fn is_id_char(chr: char) -> bool {
     chr.is_ascii_alphanumeric() || chr == '-' || chr == '_'
 }
@@ -76,11 +92,11 @@ pub fn p_identifier(input: Span) -> IResult<Span, Identifier> {
 
 #[test]
 fn test_id() {
-    works!(p_identifier, "aö", 2);
-    works!(p_identifier, "a::_a::_-::t5ö", 2);
+    works_check!(p_identifier, "aö", 2, is_simple);
+    works_check!(p_identifier, "a::_a::_-::t5ö", 2, is_compound);
 
     fails!(p_identifier, "ä::a");
-    works!(p_identifier, "a:a", 2);
+    works_check!(p_identifier, "a:a", 2, is_simple);
     fails!(p_identifier, "a::ä");
     fails!(p_identifier, "a::::b");
     fails!(p_identifier, "a::");
@@ -91,8 +107,8 @@ fn test_id() {
     fails!(p_identifier, "a::a::_");
     fails!(p_identifier, "_::a");
     fails!(p_identifier, "a:: b");
-    works!(p_identifier, "a ::b", 4);
-    works!(p_identifier, "a: :b", 4);
+    works_check!(p_identifier, "a ::b", 4, is_simple);
+    works_check!(p_identifier, "a: :b", 4, is_simple);
     fails!(p_identifier, " a");
 }
 

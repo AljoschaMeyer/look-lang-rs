@@ -54,6 +54,20 @@ macro_rules! works {
 }
 
 #[cfg(test)]
+macro_rules! works_check {
+    ($parser:expr, $input:expr, $exp:expr, $check:ident) => {
+        {
+            if let ::nom::IResult::Done(i, o) = $parser(::nom_locate::LocatedSpan::new($input)) {
+                assert!(i.fragment.len() == $exp);
+                assert!(o.$check());
+            } else {
+                panic!("parser did not succeed");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 macro_rules! fails {
     ($parser:expr, $input:expr) => {
         {
@@ -108,3 +122,4 @@ fn test_ignored() {
 }
 
 pub mod identifiers;
+pub mod attributes;
