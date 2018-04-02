@@ -1,7 +1,7 @@
 use nom_locate::LocatedSpan;
 use nom::IResult;
 
-use super::{Position, identifiers::{SimpleIdentifier, p_simple_id}};
+use super::{Position, p_skip0, identifiers::{SimpleIdentifier, p_simple_id}};
 
 type Span<'a> = LocatedSpan<&'a str>;
 
@@ -27,14 +27,17 @@ impl Attribute {
     }
 }
 
-named!(rbracket<Span, Span>, tag!("]"));
+named!(_skip0_then_rbracket<Span, ()>, do_parse!(p_skip0 >> tag!("]") >> (())));
 
 pub fn p_attribute(input: Span) -> IResult<Span, Attribute> {
     let (input, start) = try_parse!(input, position!());
-    let (input, _) = try_parse!(input, tag!("#["));
+    let (input, _) = try_parse!(input, tag!("#"));
+    let (input, _) = try_parse!(input, p_skip0);
+    let (input, _) = try_parse!(input, tag!("["));
+    let (input, _) = try_parse!(input, p_skip0);
     let (input, id) = try_parse!(input, p_simple_id);
 
-    match rbracket(input) {
+    match _skip0_then_rbracket(input) {
         IResult::Done(input, _) => {
             let (input, end) = try_parse!(input, position!());
             IResult::Done(input,
@@ -43,7 +46,9 @@ pub fn p_attribute(input: Span) -> IResult<Span, Attribute> {
         _ => {
             let (input, _) = try_parse!(input, tag!("("));
             let (input, stuff) = try_parse!(input, is_not!("()"));
-            let (input, _) = try_parse!(input, tag!(")]"));
+            let (input, _) = try_parse!(input, tag!(")"));
+            let (input, _) = try_parse!(input, p_skip0);
+            let (input, _) = try_parse!(input, tag!("]"));
             let (input, end) = try_parse!(input, position!());
             IResult::Done(input,
                           Attribute::Stuff(id, stuff.fragment.to_string(), Position::new(start, end)))
@@ -57,16 +62,14 @@ fn test_attribute() {
               "#[foo]", 0, is_simple);
     works_check!(p_attribute,
               "#[foo(arbitrary non-empty stuff =,:][, but no parens)]", 0, is_stuff);
-
-    fails!(p_attribute, "#[foo()]");
-    fails!(p_attribute, "#[ foo]");
-    fails!(p_attribute, "#[foo ]");
+    works_check!(p_attribute, "# [foo]", 0, is_simple);
+    works!(p_attribute, "#[ foo]", 0);
+    works!(p_attribute, "#[foo ]", 0);
     fails!(p_attribute, "#[]");
     fails!(p_attribute, "#[f f]");
     fails!(p_attribute, "#[_]");
+    fails!(p_attribute, "#[foo()]");
     fails!(p_attribute, "#[foo(()]");
     fails!(p_attribute, "#[foo())]");
     fails!(p_attribute, "#[foo(())]");
-    // # [foo]
-    // TODO less restrictive whitespace
 }
