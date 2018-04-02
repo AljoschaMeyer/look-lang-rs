@@ -59,10 +59,14 @@ fn test_attribute() {
               "#[foo(arbitrary non-empty stuff =,:][, but no parens)]", 0, is_stuff);
 
     fails!(p_attribute, "#[foo()]");
+    fails!(p_attribute, "#[ foo]");
+    fails!(p_attribute, "#[foo ]");
     fails!(p_attribute, "#[]");
     fails!(p_attribute, "#[f f]");
     fails!(p_attribute, "#[_]");
     fails!(p_attribute, "#[foo(()]");
     fails!(p_attribute, "#[foo())]");
     fails!(p_attribute, "#[foo(())]");
+    // # [foo]
+    // TODO less restrictive whitespace
 }

@@ -78,6 +78,17 @@ macro_rules! fails {
     }
 }
 
+#[cfg(test)]
+macro_rules! not_complete {
+    ($parser:expr, $input:expr) => {
+        {
+            if let ::nom::IResult::Done(i, o) = $parser(::nom_locate::LocatedSpan::new($input)) {
+                assert!(i.fragment.len() > 0);
+            }
+        }
+    }
+}
+
 named!(pub p_skip0<Span, ()>, map!(
     many0!(alt!(
         map!(one_of!(" \n"), |_| ()) |
@@ -123,3 +134,4 @@ fn test_ignored() {
 
 pub mod identifiers;
 pub mod attributes;
+pub mod types;

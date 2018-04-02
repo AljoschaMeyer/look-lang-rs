@@ -3,7 +3,6 @@ extern crate nom;
 #[macro_use(position)]
 extern crate nom_locate;
 
-pub mod concrete_syntax;
 pub mod abstract_syntax;
 
 struct SimpleIdentifier(String);
@@ -26,23 +25,23 @@ enum Macro {
 }
 
 enum InlineType {
-    Id(Identifier),
+    Id(Identifier), // XXX
     Void, // XXX
     Fun {
         args: Vec<InlineType>,
         ret: Box<InlineType>,
-    },
+    }, // XXX
     Pointer {
         inner: Box<InlineType>,
         mutable: bool,
     }, // points to a single thing, can be dereferenced XXX
     ArrayType(Box<InlineType>), // zero or more of a type (has no static size) XXX
-    ProductAnon(Vec<InlineType>),
-    ProductNamed(Vec<(SimpleIdentifier, InlineType)>),
-    ProductRepeated(Box<InlineType>, u64), // `(Bool; 42)` XX
-    TypeLevelApplication(Identifier, Vec<InlineType>),
-    TypeLevelApplicationNamed(Identifier, Vec<(SimpleIdentifier, InlineType)>),
-    MacroInv(Identifier),
+    ProductAnon(Vec<InlineType>), // XXX
+    ProductNamed(Vec<(SimpleIdentifier, InlineType)>), // XXX
+    ProductRepeated(Box<InlineType>, u64), // `(Bool; 42)` XXX
+    TypeLevelApplication(Identifier, Vec<InlineType>), // XXX
+    TypeLevelApplicationNamed(Identifier, Vec<(SimpleIdentifier, InlineType)>), // XXX
+    MacroInv(Identifier), // XXX
     Attributed(Box<Attribute>, Box<InlineType>), // XXX
 }
 
