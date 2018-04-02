@@ -5,19 +5,19 @@ extern crate nom_locate;
 
 pub mod abstract_syntax;
 
-struct SimpleIdentifier(String);
+struct SimpleIdentifier(String); // XXX
 
 enum Identifier {
-    Simple(SimpleIdentifier),
-    Qualified(Box<Identifier>),
+    Simple(SimpleIdentifier), // XXX
+    Qualified(Box<Identifier>), // XXX
 }
 
 // TODO modules
 
 enum Attribute {
-    SimpleAttribute, // #foo
-    ListAttribute, // #foo(bar, baz)
-    MapAttribute, // #foo(bar = baz)
+    SimpleAttribute, // #foo XXX
+    ListAttribute, // #foo(bar, baz) XXX
+    MapAttribute, // #foo(bar = baz) XXX
 }
 
 enum Macro {
