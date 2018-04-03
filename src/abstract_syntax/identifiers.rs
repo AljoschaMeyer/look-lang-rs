@@ -64,10 +64,12 @@ pub fn p_simple_id(input: Span) -> IResult<Span, SimpleIdentifier> {
     let (input, simple_id) = try_parse!(input, _sid);
     if simple_id.0.len() == 1 && simple_id.0.starts_with("_") {
         IResult::Error(error_code!(ErrorKind::Custom(0)))
-    } else if simple_id.0.len() <= 255 {
-        IResult::Done(input, simple_id)
-    } else {
+    } else if simple_id.0.len() > 255 {
         IResult::Error(error_code!(ErrorKind::Custom(1)))
+    } else if simple_id.0 == "pub" || simple_id.0 == "struct" || simple_id.0 == "enum" {
+        IResult::Error(error_code!(ErrorKind::Custom(2)))
+    } else {
+        IResult::Done(input, simple_id)
     }
 }
 
@@ -138,5 +140,9 @@ fn test_simple_id() {
     fails!(p_simple_id, "-a");
     fails!(p_simple_id, "");
 
-    // TODO exclude keywords: pub
+    fails!(p_simple_id, "pub");
+    fails!(p_simple_id, "struct");
+    fails!(p_simple_id, "enum");
+    works!(p_simple_id, "pubb", 0);
 }
+// TODO remove - as id char

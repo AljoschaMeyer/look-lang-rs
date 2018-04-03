@@ -1,6 +1,6 @@
 use std::num::ParseIntError;
 
-use nom::IResult;
+use nom::{IResult, ErrorKind};
 use nom_locate::LocatedSpan;
 
 use super::{Position, p_skip0, identifiers::{SimpleIdentifier, p_simple_id, Identifier, p_identifier}, attributes::{Attribute, p_attribute}};
@@ -34,14 +34,34 @@ fn test_repetition() {
     fails!(p_repetition, "b0");
 }
 
-named!(p_sid_with_type<Span, (SimpleIdentifier, Type)>, do_parse!(
-    sid: p_simple_id >>
-    p_skip0 >>
-    tag!(":") >>
-    p_skip0 >>
-    the_type: p_type >>
-    ((sid, the_type))
-));
+named!(p_sid_with_type<Span, (Option<Attribute>, SimpleIdentifier, Type)>,
+    alt!(
+        do_parse!(
+            attr: p_attribute >>
+            p_skip0 >>
+            tag!("{") >>
+            p_skip0 >>
+            sid: p_simple_id >>
+            p_skip0 >>
+            tag!(":") >>
+            p_skip0 >>
+            the_type: p_type >>
+            p_skip0 >>
+            tag!("}") >>
+            ((Some(attr), sid, the_type))
+        ) |
+        do_parse!(
+            sid: p_simple_id >>
+            p_skip0 >>
+            tag!(":") >>
+            p_skip0 >>
+            the_type: p_type >>
+            ((None, sid, the_type))
+        )
+    )
+);
+
+named!(_peek_p_sid_with_type<Span, (Option<Attribute>, SimpleIdentifier, Type)>, peek!(p_sid_with_type));
 
 #[test]
 fn test_sid_with_type() {
@@ -49,16 +69,36 @@ fn test_sid_with_type() {
     works!(p_sid_with_type, "a:  t", 0);
     works!(p_sid_with_type, "a : t", 0);
     works!(p_sid_with_type, "a:t", 0);
+    works!(p_sid_with_type, "#[foo]{a:t}", 0);
+    works!(p_sid_with_type, "#[foo]  {  a  :  t  }", 0);
 }
 
-named!(p_type_eq_sid<Span, (Type, SimpleIdentifier)>, do_parse!(
-    the_type: p_type >>
-    p_skip0 >>
-    tag!("=") >>
-    p_skip0 >>
-    sid: p_simple_id >>
-    ((the_type, sid))
-));
+named!(p_type_eq_sid<Span, (Option<Attribute>, Type, SimpleIdentifier)>,
+    alt!(
+        do_parse!(
+            attr: p_attribute >>
+            p_skip0 >>
+            tag!("{") >>
+            p_skip0 >>
+            the_type: p_type >>
+            p_skip0 >>
+            tag!("=") >>
+            p_skip0 >>
+            sid: p_simple_id >>
+            p_skip0 >>
+            tag!("}") >>
+            ((Some(attr), the_type, sid))
+        ) |
+        do_parse!(
+            the_type: p_type >>
+            p_skip0 >>
+            tag!("=") >>
+            p_skip0 >>
+            sid: p_simple_id >>
+            ((None, the_type, sid))
+        )
+    )
+);
 
 #[test]
 fn test_type_eq_sid() {
@@ -66,23 +106,18 @@ fn test_type_eq_sid() {
     works!(p_type_eq_sid, "r =  a", 0);
     works!(p_type_eq_sid, "r = a", 0);
     works!(p_type_eq_sid, "r=a", 0);
+    works!(p_type_eq_sid, "#[foo]{r=a}", 0);
+    works!(p_type_eq_sid, "#[foo]  {  r  =  a  }", 0);
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TypeList {
     Anonymous(Vec<Type>),
-    Named(Vec<(SimpleIdentifier, Type)>)
+    Named(Vec<(Option<Attribute>, SimpleIdentifier, Type)>)
 }
 
-named!(_peek_sid_colon<Span, ()>, peek!(do_parse!(
-    p_simple_id >>
-    p_skip0 >>
-    tag!(":") >>
-    (())
-)));
-
 pub fn p_type_list(input: Span) -> IResult<Span, TypeList> {
-    match _peek_sid_colon(input) {
+    match _peek_p_sid_with_type(input) {
         IResult::Done(input, _) => {
             let (input, list) = try_parse!(input, map!(separated_list!(do_parse!(tag!(",") >> p_skip0 >> (())), p_sid_with_type), TypeList::Named));
             IResult::Done(input, list)
@@ -103,6 +138,10 @@ fn test_type_list() {
     works!(p_type_list, "a:Aö", 2);
     works!(p_type_list, "a:A,b:B,c:Cö", 2);
     works!(p_type_list, "a  :  A  ,  b  :  B  ,  c  :  Cö", 2);
+    works!(p_type_list, "@aö", 2);
+    works!(p_type_list, "a: @aö", 2);
+    works!(p_type_list, "#[foo]{@a}ö", 2);
+    works!(p_type_list, "#[foo]{ a: @a }ö", 2);
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -117,7 +156,7 @@ pub enum Type {
     Id(Identifier, Position),
     MacroInv(Identifier, String, Position),
     TypeApplicationAnon(Identifier, Vec<Type>, Position),
-    TypeApplicationNamed(Identifier, Vec<(Type, SimpleIdentifier)>, Position),
+    TypeApplicationNamed(Identifier, Vec<(Option<Attribute>, Type, SimpleIdentifier)>, Position),
 }
 
 impl Type {
@@ -346,7 +385,8 @@ pub fn p_product_or_fun_named(input: Span) -> IResult<Span, Type> {
 
 named!(_bang<Span, Span>, tag!("!"));
 named!(_langle<Span, Span>, tag!("<"));
-named!(_peek_p_type_eq_sid<Span, (Type, SimpleIdentifier)>, peek!(p_type_eq_sid));
+named!(_peek_p_type_eq_sid<Span, (Option<Attribute>, Type, SimpleIdentifier)>, peek!(p_type_eq_sid));
+named!(_peek_rangle<Span, ()>, peek!(do_parse!(p_skip0 >> tag!(">") >> (()))));
 
 pub fn p_starts_with_id(input: Span) -> IResult<Span, Type> {
     let (input, start) = try_parse!(input, position!());
@@ -370,7 +410,11 @@ pub fn p_starts_with_id(input: Span) -> IResult<Span, Type> {
         _ => {
             match _langle(input) {
                 IResult::Done(input, _) => {
-                    let (input, _) = try_parse!(input, terminated!(p_skip0, peek!(p_simple_id)));
+                    if let IResult::Done(_, _) = _peek_rangle(input) {
+                        return IResult::Error(error_code!(ErrorKind::Custom(0)));
+                    }
+
+                    let (input, _) = try_parse!(input, p_skip0);
                     match _peek_p_type_eq_sid(input) {
                         IResult::Done(input, _) => {
                             let (input, args) = try_parse!(input, separated_list!(
@@ -410,13 +454,13 @@ named!(pub p_type<Span, Type>, alt!(
 #[test]
 fn test_type() {
     works_check!(p_type, "@r", 0, is_ptr);
-    works_check!(p_type, "@ r", 0, is_ptr);
+    works_check!(p_type, "@ ( r  )", 0, is_ptr);
 
-    works_check!(p_type, "~r", 0, is_ptr_mut);
+    works_check!(p_type, "~(r, b)", 0, is_ptr_mut);
     works_check!(p_type, "~ r", 0, is_ptr_mut);
 
     works_check!(p_type, "[r]", 0, is_array);
-    works_check!(p_type, "[ r]", 0, is_array);
+    works_check!(p_type, "[ (r)]", 0, is_array);
     works_check!(p_type, "[r ]", 0, is_array);
 
     works_check!(p_type, "#[foo] { r }", 0, is_attributed);
@@ -427,34 +471,42 @@ fn test_type() {
 
     works_check!(p_type, "(r; 42)", 0, is_product_repeated);
     works_check!(p_type, "( r; 42)", 0, is_product_repeated);
-    works_check!(p_type, "(r ; 42)", 0, is_product_repeated);
+    works_check!(p_type, "((r) ; 42)", 0, is_product_repeated);
     works_check!(p_type, "(r;42)", 0, is_product_repeated);
     works_check!(p_type, "(r;  42)", 0, is_product_repeated);
     works_check!(p_type, "(r; 42 )", 0, is_product_repeated);
     fails!(p_type, "(r; 0b11)");
+    // TODO allow attributes or macros as the repetition?
 
     works_check!(p_type, "()", 0, is_product_anon);
     works_check!(p_type, "( )", 0, is_product_anon);
     works_check!(p_type, "(r)", 0, is_product_anon);
+    works_check!(p_type, "(#[foo]{r})", 0, is_product_anon);
     works_check!(p_type, "(r, r)", 0, is_product_anon);
-    works_check!(p_type, "(  r,  r  )", 0, is_product_anon);
+    works_check!(p_type, "(#[foo]{r} , r)", 0, is_product_anon);
+    works_check!(p_type, "(  r,  (r)  )", 0, is_product_anon);
     works_check!(p_type, "(r,r)", 0, is_product_anon);
     works_check!(p_type, "(r ,r)", 0, is_product_anon);
 
     works_check!(p_type, "(a: r)", 0, is_product_named);
+    works_check!(p_type, "(#[foo]{a: r})", 0, is_product_named);
     works_check!(p_type, "(a: r, a: r)", 0, is_product_named);
+    works_check!(p_type, "(a: r,#[foo] {a: r  }  )", 0, is_product_named);
     works_check!(p_type, "( a: r,  A:  r )", 0, is_product_named);
-    works_check!(p_type, "(a : r)", 0, is_product_named);
+    works_check!(p_type, "(a : (r))", 0, is_product_named);
     works_check!(p_type, "(a :r)", 0, is_product_named);
     works_check!(p_type, "(a: r , b: r)", 0, is_product_named);
     fails!(p_type, "(a: r,)");
 
     works_check!(p_type, "() -> ()", 0, is_fun_anon);
     works_check!(p_type, "() ->  r", 0, is_fun_anon);
+    works_check!(p_type, "() ->  #[foo]{r}", 0, is_fun_anon);
     works_check!(p_type, "( ) -> r", 0, is_fun_anon);
     works_check!(p_type, "(r) -> r", 0, is_fun_anon);
+    works_check!(p_type, "(#[foo]{r}) -> r", 0, is_fun_anon);
     works_check!(p_type, "(r, r) -> (r, r)", 0, is_fun_anon);
-    works_check!(p_type, "(  r,  r  ) -> r", 0, is_fun_anon);
+    works_check!(p_type, "(r, #[foo]{r}) -> (#[foo]{r}, r)", 0, is_fun_anon);
+    works_check!(p_type, "(  r,  r  ) -> (r)", 0, is_fun_anon);
     works_check!(p_type, "(r,r) -> r", 0, is_fun_anon);
     works_check!(p_type, "(r ,r) -> r", 0, is_fun_anon);
     works_check!(p_type, "()-> r", 0, is_fun_anon);
@@ -462,9 +514,11 @@ fn test_type() {
     not_complete!(p_type, "() - r");
 
     works_check!(p_type, "(a: r) -> r", 0, is_fun_named);
+    works_check!(p_type, "(#[foo]{a: r}) -> r", 0, is_fun_named);
     works_check!(p_type, "(a: r, b: r) -> (r, r)", 0, is_fun_named);
+    works_check!(p_type, "(a: r, #[foo]{b: r}) -> (r, r)", 0, is_fun_named);
     works_check!(p_type, "(  a:   r,  b: r  ) -> r", 0, is_fun_named);
-    works_check!(p_type, "(a: r)-> r", 0, is_fun_named);
+    works_check!(p_type, "(a: r)-> (r)", 0, is_fun_named);
     works_check!(p_type, "(a: r)  -> r", 0, is_fun_named);
     not_complete!(p_type, "(a: r) - r");
 
@@ -481,9 +535,12 @@ fn test_type() {
     not_complete!(p_type, "a![]]");
 
     works_check!(p_type, "a<b>", 0, is_type_application_anon);
+    works_check!(p_type, "a<(b, c)>", 0, is_type_application_anon);
+    works_check!(p_type, "a<#[foo]{b}>", 0, is_type_application_anon);
     works_check!(p_type, "a::b<c>", 0, is_type_application_anon);
     works_check!(p_type, "a<  b  >", 0, is_type_application_anon);
     works_check!(p_type, "a<b, c>", 0, is_type_application_anon);
+    works_check!(p_type, "a<#[foo]{b}, c>", 0, is_type_application_anon);
     works_check!(p_type, "a<  b,  c  >", 0, is_type_application_anon);
     works_check!(p_type, "a<a,b>", 0, is_type_application_anon);
     works_check!(p_type, "a<a ,b>", 0, is_type_application_anon);
@@ -492,9 +549,11 @@ fn test_type() {
     not_complete!(p_type, "a<   >");
 
     works_check!(p_type, "a<b = y>", 0, is_type_application_named);
+    works_check!(p_type, "a<#[foo] {b = y}>", 0, is_type_application_named);
     works_check!(p_type, "a::b<c = z>", 0, is_type_application_named);
     works_check!(p_type, "a<  b   =  y  >", 0, is_type_application_named);
     works_check!(p_type, "a<b = y, c = z>", 0, is_type_application_named);
+    works_check!(p_type, "a<b = y,#[foo]{ c = z}>", 0, is_type_application_named);
     works_check!(p_type, "a<  b = y,  c = z  >", 0, is_type_application_named);
     works_check!(p_type, "a<a= x>", 0, is_type_application_named);
     works_check!(p_type, "a<a =x>", 0, is_type_application_named);
@@ -505,7 +564,7 @@ fn test_type() {
 pub enum TypeDef {
     Inline(Type),
     Attributed(Box<Attribute>, Box<TypeDef>, Position),
-    TypeLevelFun(Vec<SimpleIdentifier>, Box<TypeDef>, Position),
+    TypeLevelFun(Vec<(Option<Attribute>, SimpleIdentifier)>, Box<TypeDef>, Position),
     Struct(bool, TypeList, Position),
     Enum(bool, Vec<(SimpleIdentifier, TypeList)>, Position),
 }
@@ -562,23 +621,47 @@ named!(p_attributed_def<Span, TypeDef>, do_parse!(
     (TypeDef::Attributed(Box::new(attr), Box::new(inner), Position::new(start, end)))
 ));
 
-named!(p_type_level_fun<Span, TypeDef>, do_parse!(
-    start: position!() >>
-    tag!("<") >>
-    terminated!(p_skip0, peek!(p_simple_id)) >>
-    args: separated_list!(
+named!(p_optionally_attributed_sid<Span, (Option<Attribute>, SimpleIdentifier)>,
+    alt!(
+        do_parse!(
+            attr: p_attribute >>
+            p_skip0 >>
+            tag!("{") >>
+            p_skip0 >>
+            sid: p_simple_id >>
+            p_skip0 >>
+            tag!("}") >>
+            ((Some(attr), sid))
+        ) |
+        do_parse!(
+            sid: p_simple_id >>
+            ((None, sid))
+        )
+    )
+);
+
+pub fn p_type_level_fun(input: Span) -> IResult<Span, TypeDef> {
+    let (input, start) = try_parse!(input, position!());
+    let (input, _) = try_parse!(input, tag!("<"));
+    let (input, _) = try_parse!(input, p_skip0);
+
+    if let IResult::Done(_, _) = _peek_rangle(input) {
+        return IResult::Error(error_code!(ErrorKind::Custom(0)));
+    }
+
+    let (input, args) = try_parse!(input, separated_list!(
         do_parse!(p_skip0 >> tag!(",") >> p_skip0 >> (())),
-        p_simple_id
-    ) >>
-    p_skip0 >>
-    tag!(">") >>
-    p_skip0 >>
-    tag!("=>") >>
-    p_skip0 >>
-    return_type: p_type_def >>
-    end: position!() >>
-    (TypeDef::TypeLevelFun(args, Box::new(return_type), Position::new(start, end)))
-));
+        p_optionally_attributed_sid
+    ));
+    let (input, _) = try_parse!(input, p_skip0);
+    let (input, _) = try_parse!(input, tag!(">"));
+    let (input, _) = try_parse!(input, p_skip0);
+    let (input, _) = try_parse!(input, tag!("=>"));
+    let (input, _) = try_parse!(input, p_skip0);
+    let (input, return_type) = try_parse!(input, p_type_def);
+    let (input, end) = try_parse!(input, position!());
+    IResult::Done(input, TypeDef::TypeLevelFun(args, Box::new(return_type), Position::new(start, end)))
+}
 
 named!(p_struct<Span, TypeDef>, do_parse!(
     start: position!() >>
@@ -636,7 +719,9 @@ fn test_type_def() {
 
     works_check!(p_type_def, "<A>=>A", 0, is_type_level_fun);
     works_check!(p_type_def, "<  A  >  =>  A", 0, is_type_level_fun);
+    works_check!(p_type_def, "<#[foo]{A}>=>A", 0, is_type_level_fun);
     works_check!(p_type_def, "<A,B>=>A", 0, is_type_level_fun);
+    works_check!(p_type_def, "<#[foo]{A},#[foo]{B}>=>A", 0, is_type_level_fun);
     works_check!(p_type_def, "<  A  ,  B  >  =>  A", 0, is_type_level_fun);
     fails!(p_type_def, "<>=>A");
 
@@ -647,6 +732,7 @@ fn test_type_def() {
     works_check!(p_type_def, "struct (a:A)", 0, is_struct);
     works_check!(p_type_def, "struct (A,B)", 0, is_struct);
     works_check!(p_type_def, "struct (a:A,b:B)", 0, is_struct);
+    works_check!(p_type_def, "struct (#[foo]{a:A},b:B)", 0, is_struct);
     works_check!(p_type_def, "struct  (  a  :  A  ,  b  :  B  )", 0, is_struct);
 
     works_check!(p_type_def, "enum {}", 0, is_enum);
@@ -661,8 +747,8 @@ fn test_type_def() {
     works_check!(p_type_def, "enum{A(B,C)}", 0, is_enum);
     works_check!(p_type_def, "enum{A(  B  ,  C  )}", 0, is_enum);
     works_check!(p_type_def, "enum{A(b:B,  c  :  C  )  }", 0, is_enum);
+    works_check!(p_type_def, "enum{A(B,#[foo]{C})}", 0, is_enum);
+    works_check!(p_type_def, "enum{A(b:B,  #[foo]  {  c  :  C  }  )  }", 0, is_enum);
     not_complete!(p_type_def, "enum{A}");
     not_complete!(p_type_def, "enum{A(),}");
-
-    // TODO allow attributes in (named) lists (applications, products, product definitions, argument definitions (both value and type level))
 }
