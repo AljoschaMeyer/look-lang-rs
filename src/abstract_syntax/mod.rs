@@ -132,6 +132,7 @@ fn test_ignored() {
     works!(p_skip0, "// \rö\n   /// /\n a", 1);
 }
 
-pub mod identifiers;
 pub mod attributes;
+pub mod identifiers;
+pub mod irrefutable_patterns;
 pub mod types;

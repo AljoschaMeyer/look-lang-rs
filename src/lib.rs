@@ -132,24 +132,24 @@ enum Statement {
 
 enum PatternIrrefutable {
     Blank,
-    Id(SimpleIdentifier),
-    Attributed(Box<Attribute>, Box<PatternIrrefutable>),
+    Id(SimpleIdentifier), // TODO more: (a, b) is irrefutable as well, so is (foo = a, bar = b) or @foo
+    Attributed(Box<Attribute>, Box<PatternIrrefutable>), // TODO nope
 }
 
 enum Pattern {
     Irrefutable(PatternIrrefutable),
-    Blank,
     FloatLit(FloatLiteral),
     StringLit(StringLiteral),
     IntLitDec(IntLiteralDec),
     IntLitBin(IntLiteralBin),
     IntLitHex(IntLiteralHex),
     ProductAnon(Vec<Pattern>),
-    ProductNamed(Vec<(SimpleIdentifier, Pattern)>),
-    Sum(Identifier, Box<Pattern>),
+    ProductNamed(Vec<(SimpleIdentifier, Pattern)>), // TODO needs Option<Attribute>
+    // TODO struct
+    Sum(Identifier, Box<Pattern>), // enum
     Reference(Box<Pattern>),
-    GuardedPattern(Box<Pattern>, Box<Expression>),
-    ManyPatterns(Vec<Pattern>),
-    NamedPattern(SimpleIdentifier, Box<Pattern>),
-    Attributed(Box<Attribute>, Box<Pattern>),
-}
+    GuardedPattern(Box<Pattern>, Box<Expression>), // TODO top-level only?
+    ManyPatterns(Vec<Pattern>), // p1 | p2 | ... TODO top-level only?
+    Attributed(Box<Attribute>, Box<Pattern>), // TODO nope
+} // mut? probably want to disallow nested muts
+// don't allow arbirary attributed patterns, only attributes on product items? sums?

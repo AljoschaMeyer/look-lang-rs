@@ -73,29 +73,30 @@ fn test_sid_with_type() {
     works!(p_sid_with_type, "#[foo]  {  a  :  t  }", 0);
 }
 
-named!(p_type_eq_sid<Span, (Option<Attribute>, Type, SimpleIdentifier)>,
+// TODO these should be swapped
+named!(p_type_eq_sid<Span, (Option<Attribute>, SimpleIdentifier, Type)>,
     alt!(
         do_parse!(
             attr: p_attribute >>
             p_skip0 >>
             tag!("{") >>
             p_skip0 >>
-            the_type: p_type >>
+            sid: p_simple_id >>
             p_skip0 >>
             tag!("=") >>
             p_skip0 >>
-            sid: p_simple_id >>
+            the_type: p_type >>
             p_skip0 >>
             tag!("}") >>
-            ((Some(attr), the_type, sid))
+            ((Some(attr), sid, the_type))
         ) |
         do_parse!(
-            the_type: p_type >>
+            sid: p_simple_id >>
             p_skip0 >>
             tag!("=") >>
             p_skip0 >>
-            sid: p_simple_id >>
-            ((None, the_type, sid))
+            the_type: p_type >>
+            ((None, sid, the_type))
         )
     )
 );
@@ -104,7 +105,7 @@ named!(p_type_eq_sid<Span, (Option<Attribute>, Type, SimpleIdentifier)>,
 fn test_type_eq_sid() {
     works!(p_type_eq_sid, "r = a", 0);
     works!(p_type_eq_sid, "r =  a", 0);
-    works!(p_type_eq_sid, "r = a", 0);
+    works!(p_type_eq_sid, "r = @a", 0);
     works!(p_type_eq_sid, "r=a", 0);
     works!(p_type_eq_sid, "#[foo]{r=a}", 0);
     works!(p_type_eq_sid, "#[foo]  {  r  =  a  }", 0);
@@ -156,7 +157,7 @@ pub enum Type {
     Id(Identifier, Position),
     MacroInv(Identifier, String, Position),
     TypeApplicationAnon(Identifier, Vec<Type>, Position),
-    TypeApplicationNamed(Identifier, Vec<(Option<Attribute>, Type, SimpleIdentifier)>, Position),
+    TypeApplicationNamed(Identifier, Vec<(Option<Attribute>, SimpleIdentifier, Type)>, Position),
 }
 
 impl Type {
@@ -385,7 +386,7 @@ pub fn p_tuple_or_fun_named(input: Span) -> IResult<Span, Type> {
 
 named!(_bang<Span, Span>, tag!("!"));
 named!(_langle<Span, Span>, tag!("<"));
-named!(_peek_p_type_eq_sid<Span, (Option<Attribute>, Type, SimpleIdentifier)>, peek!(p_type_eq_sid));
+named!(_peek_p_type_eq_sid<Span, (Option<Attribute>, SimpleIdentifier, Type)>, peek!(p_type_eq_sid));
 named!(_peek_rangle<Span, ()>, peek!(do_parse!(p_skip0 >> tag!(">") >> (()))));
 
 pub fn p_starts_with_id(input: Span) -> IResult<Span, Type> {
@@ -538,7 +539,7 @@ fn test_type() {
     works_check!(p_type, "a<(b, c)>", 0, is_type_application_anon);
     works_check!(p_type, "a<#[foo]{b}>", 0, is_type_application_anon);
     works_check!(p_type, "a::b<c>", 0, is_type_application_anon);
-    works_check!(p_type, "a<  b  >", 0, is_type_application_anon);
+    works_check!(p_type, "a<  @b  >", 0, is_type_application_anon);
     works_check!(p_type, "a<b, c>", 0, is_type_application_anon);
     works_check!(p_type, "a<#[foo]{b}, c>", 0, is_type_application_anon);
     works_check!(p_type, "a<  b,  c  >", 0, is_type_application_anon);
@@ -555,7 +556,7 @@ fn test_type() {
     works_check!(p_type, "a<b = y, c = z>", 0, is_type_application_named);
     works_check!(p_type, "a<b = y,#[foo]{ c = z}>", 0, is_type_application_named);
     works_check!(p_type, "a<  b = y,  c = z  >", 0, is_type_application_named);
-    works_check!(p_type, "a<a= x>", 0, is_type_application_named);
+    works_check!(p_type, "a<a= @x>", 0, is_type_application_named);
     works_check!(p_type, "a<a =x>", 0, is_type_application_named);
     works_check!(p_type, "a<a = x,b = y>", 0, is_type_application_named);
     works_check!(p_type, "a<a = x , b = y>", 0, is_type_application_named);

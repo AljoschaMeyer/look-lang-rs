@@ -65,7 +65,8 @@ pub fn p_simple_id(input: Span) -> IResult<Span, SimpleIdentifier> {
         IResult::Error(error_code!(ErrorKind::Custom(0)))
     } else if simple_id.0.len() > 255 {
         IResult::Error(error_code!(ErrorKind::Custom(1)))
-    } else if simple_id.0 == "pub" || simple_id.0 == "struct" || simple_id.0 == "enum" {
+    } else if simple_id.0 == "pub" || simple_id.0 == "struct" || simple_id.0 == "enum" ||
+              simple_id.0 == "mut" {
         IResult::Error(error_code!(ErrorKind::Custom(2)))
     } else {
         IResult::Done(input, simple_id)
@@ -141,5 +142,6 @@ fn test_simple_id() {
     fails!(p_simple_id, "pub");
     fails!(p_simple_id, "struct");
     fails!(p_simple_id, "enum");
+    fails!(p_simple_id, "mut");
     works!(p_simple_id, "pubb", 0);
 }
