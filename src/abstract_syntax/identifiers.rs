@@ -5,9 +5,8 @@ use super::Position;
 
 type Span<'a> = LocatedSpan<&'a str>;
 
-// Valid characters for simple identifiers: alphanumeric, `-`, `_`. Identifiers may not start with
-// `-`. An identifier starting with `_` must have a length of at least 2. Maximum length of a
-// simple identifier is 255.
+// Valid characters for simple identifiers: alphanumeric, `_`. An identifier starting with `_`
+// must have a length of at least 2. Maximum length of a simple identifier is 255.
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct SimpleIdentifier(pub String, pub Position);
@@ -36,7 +35,7 @@ impl Identifier {
 }
 
 fn is_id_char(chr: char) -> bool {
-    chr.is_ascii_alphanumeric() || chr == '-' || chr == '_'
+    chr.is_ascii_alphanumeric() || chr == '_'
 }
 
 fn is_id_start_char(chr: char) -> bool {
@@ -95,7 +94,7 @@ pub fn p_identifier(input: Span) -> IResult<Span, Identifier> {
 #[test]
 fn test_id() {
     works_check!(p_identifier, "aö", 2, is_simple);
-    works_check!(p_identifier, "a::_a::_-::t5ö", 2, is_compound);
+    works_check!(p_identifier, "a::_a::__::t5ö", 2, is_compound);
 
     fails!(p_identifier, "ä::a");
     works_check!(p_identifier, "a:a", 2, is_simple);
@@ -123,8 +122,7 @@ fn test_simple_id() {
     works!(p_simple_id, "__", 0);
     works!(p_simple_id, "_9", 0);
     works!(p_simple_id, "a9", 0);
-    works!(p_simple_id, "_-", 0);
-    works!(p_simple_id, "a-_9", 0);
+    works!(p_simple_id, "a_9", 0);
     works!(p_simple_id, "_aöa", 3);
     works!(p_simple_id,
            "abcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefg",
@@ -145,4 +143,3 @@ fn test_simple_id() {
     fails!(p_simple_id, "enum");
     works!(p_simple_id, "pubb", 0);
 }
-// TODO remove - as id char
