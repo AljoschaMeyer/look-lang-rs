@@ -150,8 +150,8 @@ pub enum Type {
     PtrMut(Box<Type>, Position),
     Array(Box<Type>, Position),
     Attributed(Box<Attribute>, Box<Type>, Position),
-    ProductRepeated(Box<Type>, Repetition, Position),
-    Product(TypeList, Position),
+    TupleRepeated(Box<Type>, Repetition, Position),
+    Tuple(TypeList, Position),
     Fun(TypeList, Box<Type>, Position),
     Id(Identifier, Position),
     MacroInv(Identifier, String, Position),
@@ -188,16 +188,16 @@ impl Type {
         }
     }
 
-    pub fn is_product_repeated(&self) -> bool {
+    pub fn is_tuple_repeated(&self) -> bool {
         match self {
-            &Type::ProductRepeated(_, _, _) => true,
+            &Type::TupleRepeated(_, _, _) => true,
             _ => false
         }
     }
 
-    pub fn is_product_anon(&self) -> bool {
+    pub fn is_tuple_anon(&self) -> bool {
         match self {
-            &Type::Product(ref list, _) => {
+            &Type::Tuple(ref list, _) => {
                 match list {
                     &TypeList::Anonymous(_) => true,
                     _ => false
@@ -207,9 +207,9 @@ impl Type {
         }
     }
 
-    pub fn is_product_named(&self) -> bool {
+    pub fn is_tuple_named(&self) -> bool {
         match self {
-            &Type::Product(ref list, _) => {
+            &Type::Tuple(ref list, _) => {
                 match list {
                     &TypeList::Named(_) => true,
                     _ => false
@@ -314,7 +314,7 @@ named!(p_attributed<Span, Type>, do_parse!(
     (Type::Attributed(Box::new(attr), Box::new(inner), Position::new(start, end)))
 ));
 
-named!(p_product_repeated<Span, Type>, do_parse!(
+named!(p_tuple_repeated<Span, Type>, do_parse!(
     start: position!() >>
     tag!("(") >>
     p_skip0 >>
@@ -326,12 +326,12 @@ named!(p_product_repeated<Span, Type>, do_parse!(
     p_skip0 >>
     tag!(")") >>
     end: position!() >>
-    (Type::ProductRepeated(Box::new(inner), rep, Position::new(start, end)))
+    (Type::TupleRepeated(Box::new(inner), rep, Position::new(start, end)))
 ));
 
 named!(_arrow<Span, Span>, tag!("->"));
 
-pub fn p_product_or_fun_anon(input: Span) -> IResult<Span, Type> {
+pub fn p_tuple_or_fun_anon(input: Span) -> IResult<Span, Type> {
     let (input, start) = try_parse!(input, position!());
     let (input, _) = try_parse!(input, tag!("("));
     let (input, _) = try_parse!(input, p_skip0);
@@ -352,12 +352,12 @@ pub fn p_product_or_fun_anon(input: Span) -> IResult<Span, Type> {
         }
         _ => {
             let (input, end) = try_parse!(input, position!());
-            IResult::Done(input, Type::Product(TypeList::Anonymous(types), Position::new(start, end)))
+            IResult::Done(input, Type::Tuple(TypeList::Anonymous(types), Position::new(start, end)))
         },
     }
 }
 
-pub fn p_product_or_fun_named(input: Span) -> IResult<Span, Type> {
+pub fn p_tuple_or_fun_named(input: Span) -> IResult<Span, Type> {
     let (input, start) = try_parse!(input, position!());
     let (input, _) = try_parse!(input, tag!("("));
     let (input, _) = try_parse!(input, p_skip0);
@@ -378,7 +378,7 @@ pub fn p_product_or_fun_named(input: Span) -> IResult<Span, Type> {
         }
         _ => {
             let (input, end) = try_parse!(input, position!());
-            IResult::Done(input, Type::Product(TypeList::Named(types), Position::new(start, end)))
+            IResult::Done(input, Type::Tuple(TypeList::Named(types), Position::new(start, end)))
         },
     }
 }
@@ -448,7 +448,7 @@ pub fn p_starts_with_id(input: Span) -> IResult<Span, Type> {
 }
 
 named!(pub p_type<Span, Type>, alt!(
-    p_ptr | p_ptr_mut | p_array | p_attributed | p_product_repeated | p_product_or_fun_anon | p_product_or_fun_named | p_starts_with_id
+    p_ptr | p_ptr_mut | p_array | p_attributed | p_tuple_repeated | p_tuple_or_fun_anon | p_tuple_or_fun_named | p_starts_with_id
 ));
 
 #[test]
@@ -469,33 +469,33 @@ fn test_type() {
     works_check!(p_type, "#[foo] {r }", 0, is_attributed);
     works_check!(p_type, "#[foo] { r}", 0, is_attributed);
 
-    works_check!(p_type, "(r; 42)", 0, is_product_repeated);
-    works_check!(p_type, "( r; 42)", 0, is_product_repeated);
-    works_check!(p_type, "((r) ; 42)", 0, is_product_repeated);
-    works_check!(p_type, "(r;42)", 0, is_product_repeated);
-    works_check!(p_type, "(r;  42)", 0, is_product_repeated);
-    works_check!(p_type, "(r; 42 )", 0, is_product_repeated);
+    works_check!(p_type, "(r; 42)", 0, is_tuple_repeated);
+    works_check!(p_type, "( r; 42)", 0, is_tuple_repeated);
+    works_check!(p_type, "((r) ; 42)", 0, is_tuple_repeated);
+    works_check!(p_type, "(r;42)", 0, is_tuple_repeated);
+    works_check!(p_type, "(r;  42)", 0, is_tuple_repeated);
+    works_check!(p_type, "(r; 42 )", 0, is_tuple_repeated);
     fails!(p_type, "(r; 0b11)");
     // TODO allow attributes or macros as the repetition?
 
-    works_check!(p_type, "()", 0, is_product_anon);
-    works_check!(p_type, "( )", 0, is_product_anon);
-    works_check!(p_type, "(r)", 0, is_product_anon);
-    works_check!(p_type, "(#[foo]{r})", 0, is_product_anon);
-    works_check!(p_type, "(r, r)", 0, is_product_anon);
-    works_check!(p_type, "(#[foo]{r} , r)", 0, is_product_anon);
-    works_check!(p_type, "(  r,  (r)  )", 0, is_product_anon);
-    works_check!(p_type, "(r,r)", 0, is_product_anon);
-    works_check!(p_type, "(r ,r)", 0, is_product_anon);
+    works_check!(p_type, "()", 0, is_tuple_anon);
+    works_check!(p_type, "( )", 0, is_tuple_anon);
+    works_check!(p_type, "(r)", 0, is_tuple_anon);
+    works_check!(p_type, "(#[foo]{r})", 0, is_tuple_anon);
+    works_check!(p_type, "(r, r)", 0, is_tuple_anon);
+    works_check!(p_type, "(#[foo]{r} , r)", 0, is_tuple_anon);
+    works_check!(p_type, "(  r,  (r)  )", 0, is_tuple_anon);
+    works_check!(p_type, "(r,r)", 0, is_tuple_anon);
+    works_check!(p_type, "(r ,r)", 0, is_tuple_anon);
 
-    works_check!(p_type, "(a: r)", 0, is_product_named);
-    works_check!(p_type, "(#[foo]{a: r})", 0, is_product_named);
-    works_check!(p_type, "(a: r, a: r)", 0, is_product_named);
-    works_check!(p_type, "(a: r,#[foo] {a: r  }  )", 0, is_product_named);
-    works_check!(p_type, "( a: r,  A:  r )", 0, is_product_named);
-    works_check!(p_type, "(a : (r))", 0, is_product_named);
-    works_check!(p_type, "(a :r)", 0, is_product_named);
-    works_check!(p_type, "(a: r , b: r)", 0, is_product_named);
+    works_check!(p_type, "(a: r)", 0, is_tuple_named);
+    works_check!(p_type, "(#[foo]{a: r})", 0, is_tuple_named);
+    works_check!(p_type, "(a: r, a: r)", 0, is_tuple_named);
+    works_check!(p_type, "(a: r,#[foo] {a: r  }  )", 0, is_tuple_named);
+    works_check!(p_type, "( a: r,  A:  r )", 0, is_tuple_named);
+    works_check!(p_type, "(a : (r))", 0, is_tuple_named);
+    works_check!(p_type, "(a :r)", 0, is_tuple_named);
+    works_check!(p_type, "(a: r , b: r)", 0, is_tuple_named);
     fails!(p_type, "(a: r,)");
 
     works_check!(p_type, "() -> ()", 0, is_fun_anon);
