@@ -16,95 +16,84 @@ named!(p_opt_mut<Span, bool>,
     )
 );
 
-named!(p_mut_sid<Span, (bool, Option<Attribute>, SimpleIdentifier)>,
-    alt!(
-        do_parse!(
-            mutable: p_opt_mut >>
-            attr: p_attribute >>
-            p_skip0 >>
-            tag!("{") >>
-            p_skip0 >>
-            id: p_simple_id >>
-            p_skip0 >>
-            tag!("}") >>
-            ((mutable, Some(attr), id))
-        ) |
-        do_parse!(
-           mutable: p_opt_mut >>
-           id: p_simple_id >>
-           ((mutable, None, id))
-       )
-    )
- );
-
- #[test]
- fn test_mut_sid() {
-     works!(p_mut_sid, "a", 0);
-     works!(p_mut_sid, "#[foo]{a}", 0);
-     works!(p_mut_sid, "mut a", 0);
-     works!(p_mut_sid, "mut #[foo]{a}", 0);
- }
-
-named!(p_sid_eq_sid<Span, (Option<Attribute>, SimpleIdentifier, bool, Option<Attribute>, SimpleIdentifier)>,
+named!(p_pattern_irrefutable_opt_attributed<Span, (Option<Attribute>, PatternIrrefutable)>,
     alt!(
         do_parse!(
             attr: p_attribute >>
             p_skip0 >>
             tag!("{") >>
-            p_skip0 >>
-            sid: p_simple_id >>
-            p_skip0 >>
-            tag!("=") >>
-            p_skip0 >>
-            mutable_sid: p_mut_sid >>
+            inner: p_pattern_irrefutable >>
             p_skip0 >>
             tag!("}") >>
-            ((Some(attr), sid, mutable_sid.0, mutable_sid.1, mutable_sid.2))
+            ((Some(attr), inner))
         ) |
         do_parse!(
-            sid: p_simple_id >>
-            p_skip0 >>
-            tag!("=") >>
-            p_skip0 >>
-            mutable_sid: p_mut_sid >>
-            ((None, sid, mutable_sid.0, mutable_sid.1, mutable_sid.2))
+            inner: p_pattern_irrefutable >>
+            ((None, inner))
         )
     )
 );
 
-named!(_peek_p_sid_eq_sid<Span, (Option<Attribute>, SimpleIdentifier, bool, Option<Attribute>, SimpleIdentifier)>, peek!(p_sid_eq_sid));
+named!(p_pattern_irrefutable_named<Span, (Option<Attribute>, SimpleIdentifier, Option<Attribute>, PatternIrrefutable)>,
+    alt!(
+        do_parse!(
+            attr: p_attribute >>
+            p_skip0 >>
+            tag!("{") >>
+            p_skip0 >>
+            sid: p_simple_id >>
+            p_skip0 >>
+            tag!("=") >>
+            p_skip0 >>
+            inner: p_pattern_irrefutable_opt_attributed >>
+            p_skip0 >>
+            tag!("}") >>
+            ((Some(attr), sid, inner.0, inner.1))
+        ) |
+        do_parse!(
+            sid: p_simple_id >>
+            p_skip0 >>
+            tag!("=") >>
+            p_skip0 >>
+            inner: p_pattern_irrefutable_opt_attributed >>
+            ((None, sid, inner.0, inner.1))
+        )
+    )
+);
+
+named!(_peek_p_pattern_irrefutable_named<Span, (Option<Attribute>, SimpleIdentifier, Option<Attribute>, PatternIrrefutable)>, peek!(p_pattern_irrefutable_named));
 
 #[test]
 fn test_sid_eq_sid() {
-    works!(p_sid_eq_sid, "a= t", 0);
-    works!(p_sid_eq_sid, "a=  t", 0);
-    works!(p_sid_eq_sid, "a = t", 0);
-    works!(p_sid_eq_sid, "a=t", 0);
-    works!(p_sid_eq_sid, "#[foo]{a=t}", 0);
-    works!(p_sid_eq_sid, "#[foo]  {  a  =  t  }", 0);
+    works!(p_pattern_irrefutable_named, "a= t", 0);
+    works!(p_pattern_irrefutable_named, "a=  t", 0);
+    works!(p_pattern_irrefutable_named, "a = t", 0);
+    works!(p_pattern_irrefutable_named, "a=t", 0);
+    works!(p_pattern_irrefutable_named, "#[foo]{a=t}", 0);
+    works!(p_pattern_irrefutable_named, "#[foo]  {  a  =  t  }", 0);
 
-    works!(p_sid_eq_sid, "a= mut t", 0);
-    works!(p_sid_eq_sid, "a=  mut  t", 0);
-    works!(p_sid_eq_sid, "a = mut t", 0);
-    works!(p_sid_eq_sid, "a=mut t", 0);
-    works!(p_sid_eq_sid, "#[foo]{a=mut t}", 0);
-    works!(p_sid_eq_sid, "#[foo]  {  a  =  mut  t  }", 0);
+    works!(p_pattern_irrefutable_named, "a= mut t", 0);
+    works!(p_pattern_irrefutable_named, "a=  mut  t", 0);
+    works!(p_pattern_irrefutable_named, "a = mut t", 0);
+    works!(p_pattern_irrefutable_named, "a=mut t", 0);
+    works!(p_pattern_irrefutable_named, "#[foo]{a=mut t}", 0);
+    works!(p_pattern_irrefutable_named, "#[foo]  {  a  =  mut  t  }", 0);
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum MutSidList {
-    Anonymous(Vec<(bool, Option<Attribute>, SimpleIdentifier)>),
-    Named(Vec<(Option<Attribute>, SimpleIdentifier, bool, Option<Attribute>, SimpleIdentifier)>)
+pub enum PatternIrrefutableList {
+    Anonymous(Vec<(Option<Attribute>, PatternIrrefutable)>),
+    Named(Vec<(Option<Attribute>, SimpleIdentifier, Option<Attribute>, PatternIrrefutable)>)
 }
 
-pub fn p_sid_list(input: Span) -> IResult<Span, MutSidList> {
-    match _peek_p_sid_eq_sid(input) {
+pub fn p_pattern_irrefutable_list(input: Span) -> IResult<Span, PatternIrrefutableList> {
+    match _peek_p_pattern_irrefutable_named(input) {
         IResult::Done(input, _) => {
-            let (input, list) = try_parse!(input, map!(separated_list!(do_parse!(p_skip0 >> tag!(",") >> p_skip0 >> (())), p_sid_eq_sid), MutSidList::Named));
+            let (input, list) = try_parse!(input, map!(separated_list!(do_parse!(p_skip0 >> tag!(",") >> p_skip0 >> (())), p_pattern_irrefutable_named), PatternIrrefutableList::Named));
             IResult::Done(input, list)
         }
         _ => {
-            let (input, list) = try_parse!(input, map!(separated_list!(do_parse!(p_skip0 >> tag!(",") >> p_skip0 >> (())), p_mut_sid), MutSidList::Anonymous));
+            let (input, list) = try_parse!(input, map!(separated_list!(do_parse!(p_skip0 >> tag!(",") >> p_skip0 >> (())), p_pattern_irrefutable_opt_attributed), PatternIrrefutableList::Anonymous));
             IResult::Done(input, list)
         }
     }
@@ -112,26 +101,26 @@ pub fn p_sid_list(input: Span) -> IResult<Span, MutSidList> {
 
 #[test]
 fn test_sid_list() {
-    works!(p_sid_list, "ö", 2);
-    works!(p_sid_list, "Aö", 2);
-    works!(p_sid_list, "A,B,Cö", 2);
-    works!(p_sid_list, "A  ,  B  ,  Cö", 2);
-    works!(p_sid_list, "a=Aö", 2);
-    works!(p_sid_list, "a=A,b=B,c=Cö", 2);
-    works!(p_sid_list, "a  =  A  ,  b  =  B  ,  c  =  Cö", 2);
-    works!(p_sid_list, "#[foo]{a}ö", 2);
-    works!(p_sid_list, "#[foo]{ a= a }ö", 2);
-    works!(p_sid_list, "#[foo]{ a= #[foo]{a} }ö", 2);
+    works!(p_pattern_irrefutable_list, "ö", 2);
+    works!(p_pattern_irrefutable_list, "Aö", 2);
+    works!(p_pattern_irrefutable_list, "A,@~B,Cö", 2);
+    works!(p_pattern_irrefutable_list, "A  ,  B  ,  Cö", 2);
+    works!(p_pattern_irrefutable_list, "a=Aö", 2);
+    works!(p_pattern_irrefutable_list, "a=A,b=B,c=Cö", 2);
+    works!(p_pattern_irrefutable_list, "a  =  A  ,  b  =  B  ,  c  =  Cö", 2);
+    works!(p_pattern_irrefutable_list, "#[foo]{a}ö", 2);
+    works!(p_pattern_irrefutable_list, "#[foo]{ a= a }ö", 2);
+    works!(p_pattern_irrefutable_list, "#[foo]{ a= #[foo]{a} }ö", 2);
 
-    works!(p_sid_list, "mut Aö", 2);
-    works!(p_sid_list, "A, mut B,Cö", 2);
-    works!(p_sid_list, "A  ,  mut  B  ,  Cö", 2);
-    works!(p_sid_list, "a=mut Aö", 2);
-    works!(p_sid_list, "a=A,b=mut B,c=Cö", 2);
-    works!(p_sid_list, "a  =  A  ,  b  =  mut  B  ,  c  =  Cö", 2);
-    works!(p_sid_list, "mut #[foo]{a}ö", 2);
-    works!(p_sid_list, "#[foo]{ a= mut a }ö", 2);
-    works!(p_sid_list, "#[foo]{ a= mut #[foo]{a} }ö", 2);
+    works!(p_pattern_irrefutable_list, "mut Aö", 2);
+    works!(p_pattern_irrefutable_list, "A, mut B,Cö", 2);
+    works!(p_pattern_irrefutable_list, "A  ,  mut  B  ,  Cö", 2);
+    works!(p_pattern_irrefutable_list, "a=mut Aö", 2);
+    works!(p_pattern_irrefutable_list, "a=A,b=mut B,c=Cö", 2);
+    works!(p_pattern_irrefutable_list, "a  =  A  ,  b  =  mut  B  ,  c  =  Cö", 2);
+    works!(p_pattern_irrefutable_list, "#[foo]{mut a}ö", 2);
+    works!(p_pattern_irrefutable_list, "#[foo]{ a= mut a }ö", 2);
+    works!(p_pattern_irrefutable_list, "#[foo]{ a= #[foo]{mut a} }ö", 2);
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -140,8 +129,8 @@ pub enum PatternIrrefutable {
     Blank(Position),
     Ptr(Box<PatternIrrefutable>, Position),
     PtrMut(Box<PatternIrrefutable>, Position),
-    Tuple(MutSidList, Position),
-    Struct(Identifier, MutSidList, Position),
+    Tuple(PatternIrrefutableList, Position),
+    Struct(Identifier, PatternIrrefutableList, Position),
 }
 
 impl PatternIrrefutable {
@@ -223,7 +212,7 @@ named!(p_tuple<Span, PatternIrrefutable>, do_parse!(
     start: position!() >>
     tag!("(") >>
     p_skip0 >>
-    list: p_sid_list >>
+    list: p_pattern_irrefutable_list >>
     p_skip0 >>
     tag!(")") >>
     end: position!() >>
@@ -236,7 +225,7 @@ named!(p_struct<Span, PatternIrrefutable>, do_parse!(
     p_skip0 >>
     tag!("(") >>
     p_skip0 >>
-    list: p_sid_list >>
+    list: p_pattern_irrefutable_list >>
     p_skip0 >>
     tag!(")") >>
     end: position!() >>
@@ -259,9 +248,11 @@ fn test_pattern_irrefutable() {
 
     works_check!(p_pattern_irrefutable, "@a", 0, is_ptr);
     works_check!(p_pattern_irrefutable, "@~a", 0, is_ptr);
+    fails!(p_pattern_irrefutable, "mut @A");
 
     works_check!(p_pattern_irrefutable, "~a", 0, is_ptr_mut);
     works_check!(p_pattern_irrefutable, "~@a", 0, is_ptr_mut);
+    fails!(p_pattern_irrefutable, "mut ~A");
 
     works_check!(p_pattern_irrefutable, "()", 0, is_tuple);
     works_check!(p_pattern_irrefutable, "(a)", 0, is_tuple);
@@ -273,9 +264,9 @@ fn test_pattern_irrefutable() {
     works_check!(p_pattern_irrefutable, "(mut a)", 0, is_tuple);
     works_check!(p_pattern_irrefutable, "(a,mut b)", 0, is_tuple);
     works_check!(p_pattern_irrefutable, "(a=a,b=mut b)", 0, is_tuple);
-    works_check!(p_pattern_irrefutable, "(mut #[foo]{a})", 0, is_tuple);
-    works_check!(p_pattern_irrefutable, "(mut #[foo]{a},b)", 0, is_tuple);
-    works_check!(p_pattern_irrefutable, "(#[foo]{a=mut #[foo]{a}},b=b)", 0, is_tuple);
+    works_check!(p_pattern_irrefutable, "(#[foo]{mut a})", 0, is_tuple);
+    works_check!(p_pattern_irrefutable, "(#[foo]{mut a},b)", 0, is_tuple);
+    works_check!(p_pattern_irrefutable, "(#[foo]{a=#[foo]{mut a}},b=b)", 0, is_tuple);
     not_complete!(p_pattern_irrefutable, "mut()");
     fails!(p_pattern_irrefutable, "(mut a=mut b)");
 
@@ -290,7 +281,7 @@ fn test_pattern_irrefutable() {
     works_check!(p_pattern_irrefutable, "s(a,mut b)", 0, is_struct);
     works_check!(p_pattern_irrefutable, "s::t::u  (  a  ,  mut  b  )", 0, is_struct);
     works_check!(p_pattern_irrefutable, "s(a=a,b=mut b)", 0, is_struct);
-    works_check!(p_pattern_irrefutable, "s(mut #[foo]{a})", 0, is_struct);
-    works_check!(p_pattern_irrefutable, "s(mut #[foo]{a},b)", 0, is_struct);
-    works_check!(p_pattern_irrefutable, "s(#[foo]{a=mut #[foo]{a}},b=b)", 0, is_struct);
+    works_check!(p_pattern_irrefutable, "s(#[foo]{mut a})", 0, is_struct);
+    works_check!(p_pattern_irrefutable, "s(#[foo]{mut a},b)", 0, is_struct);
+    works_check!(p_pattern_irrefutable, "s(#[foo]{a=#[foo]{mut a}},b=b)", 0, is_struct);
 }
