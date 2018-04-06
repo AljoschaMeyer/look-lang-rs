@@ -73,7 +73,6 @@ fn test_sid_with_type() {
     works!(p_sid_with_type, "#[foo]  {  a  :  t  }", 0);
 }
 
-// TODO these should be swapped
 named!(p_type_eq_sid<Span, (Option<Attribute>, SimpleIdentifier, Type)>,
     alt!(
         do_parse!(

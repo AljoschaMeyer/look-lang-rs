@@ -5,6 +5,8 @@ use super::{Position, p_skip0, p_skip1, identifiers::{SimpleIdentifier, p_simple
 
 type Span<'a> = LocatedSpan<&'a str>;
 
+// TODO type annotations?
+
 named!(p_opt_mut<Span, bool>,
     do_parse!(
         is_mut: opt!(do_parse!(
@@ -100,7 +102,7 @@ pub fn p_pattern_irrefutable_list(input: Span) -> IResult<Span, PatternIrrefutab
 }
 
 #[test]
-fn test_sid_list() {
+fn test_pattern_irrefutable_list() {
     works!(p_pattern_irrefutable_list, "ö", 2);
     works!(p_pattern_irrefutable_list, "Aö", 2);
     works!(p_pattern_irrefutable_list, "A,@~B,Cö", 2);
