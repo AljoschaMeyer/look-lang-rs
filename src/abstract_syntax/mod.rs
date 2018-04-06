@@ -5,7 +5,7 @@ use nom::AsBytes;
 type Span<'a> = LocatedSpan<&'a str>;
 
 /// A position in the input. Lines and columns start at 1.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Position {
     start_line: u32,
     start_col: usize,
@@ -14,6 +14,15 @@ pub struct Position {
 }
 
 impl Position {
+    pub fn from_positions(start: Position, end: Position) -> Position {
+        Position {
+            start_line: start.start_line,
+            start_col: start.start_col,
+            end_line: end.end_line,
+            end_col: end.end_col,
+        }
+    }
+
     fn new<T: AsBytes>(start: LocatedSpan<T>, end: LocatedSpan<T>) -> Position {
         Position {
             start_line: start.line,
