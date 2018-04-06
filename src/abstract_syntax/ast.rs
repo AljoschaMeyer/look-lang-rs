@@ -433,7 +433,7 @@ pub enum UseStart {
     Super(Position),
     Mod(Position),
     Extern(Position),
-    Magic(Position), // really special-case this?
+    Magic(Position),
     Id(SimpleIdentifier),
 }
 
@@ -489,6 +489,32 @@ impl Pos for FfiItem {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub enum MacroDef {
+    Id(Identifier),
+}
+
+impl Pos for MacroDef {
+    fn pos(&self) -> Position {
+        match self {
+            &MacroDef::Id(ref inner) => inner.pos(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum AttributeDef {
+    Id(Identifier),
+}
+
+impl Pos for AttributeDef {
+    fn pos(&self) -> Position {
+        match self {
+            &AttributeDef::Id(ref inner) => inner.pos(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct Module(pub Vec<(Attributes, Item)>, pub Position);
 
 impl Pos for Module {
@@ -498,52 +524,13 @@ impl Pos for Module {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Magic(pub MetaItem, pub Position);
-
-impl Pos for Magic {
-    fn pos(&self) -> Position {
-        self.1
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum MagicExpression {
-    Magic(Magic),
-    Expression(Expression),
-}
-
-impl Pos for MagicExpression {
-    fn pos(&self) -> Position {
-        match self {
-            &MagicExpression::Magic(ref inner) => inner.pos(),
-            &MagicExpression::Expression(ref inner) => inner.pos(),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum MagicTypeDef {
-    Magic(Magic),
-    TypeDef(TypeDef),
-}
-
-impl Pos for MagicTypeDef {
-    fn pos(&self) -> Position {
-        match self {
-            &MagicTypeDef::Magic(ref inner) => inner.pos(),
-            &MagicTypeDef::TypeDef(ref inner) => inner.pos(),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
 pub enum Item {
     Use(bool, UseStart, UseTree, Position),
     Mod(bool, SimpleIdentifier, Box<Module>, Position),
-    TypeDef(bool, SimpleIdentifier, MagicTypeDef, Position),
-    Macro(bool, SimpleIdentifier, Magic, Position),
-    Attribute(bool, SimpleIdentifier, Magic, Position),
-    Let(bool, Pattern, MagicExpression, Position),
+    TypeDef(bool, SimpleIdentifier, TypeDef, Position),
+    Macro(bool, SimpleIdentifier, MacroDef, Position),
+    Attribute(bool, SimpleIdentifier, AttributeDef, Position),
+    Let(bool, Pattern, Expression, Position),
     Ffi(SimpleIdentifier, FfiBlock, Position),
 }
 
