@@ -1,3 +1,8 @@
+use std::u64;
+use std::f64;
+use std::str::FromStr;
+use std::convert::TryFrom;
+
 use nom::{IResult, ErrorKind};
 use nom_locate::LocatedSpan;
 
@@ -169,20 +174,42 @@ impl Pos for TypeDef {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct IntLiteral(pub String, pub Position);
+pub enum IntSuffix {
+    U8,
+    U16,
+    U32,
+    U64,
+    USize,
+    I8,
+    I16,
+    I32,
+    I64,
+    ISize,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct IntLiteral(pub u64, Option<IntSuffix>, pub Position);
 
 impl Pos for IntLiteral {
     fn pos(&self) -> Position {
-        self.1
+        self.2
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct FloatLiteral(pub String, pub Position);
+pub enum FloatSuffix {
+    F32,
+    F64,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct FloatLiteral(pub f64, Option<FloatSuffix>, pub Position);
+
+impl Eq for FloatLiteral {}
 
 impl Pos for FloatLiteral {
     fn pos(&self) -> Position {
-        self.1
+        self.2
     }
 }
 
@@ -301,6 +328,10 @@ pub enum BinOp {
     ShiftL,
     ShiftR,
     Sub,
+    GT,
+    GET,
+    LT,
+    LET,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -557,6 +588,14 @@ impl Pos for File {
     }
 }
 
+pub const ERR_SIMPLE_ID_ONLY_UNDERSCORE: u32 = 0;
+pub const ERR_SIMPLE_ID_TOO_LONG: u32 = 1;
+pub const ERR_SIMPLE_ID_KEYWORD: u32 = 2;
+pub const ERR_INT_NOT_A_U64: u32 = 3;
+pub const ERR_FLOAT_NOT_A_F64: u32 = 4;
+pub const ERR_STRING_UNICODE_ESCAPE_TOO_LONG: u32 = 5;
+pub const ERR_STRING_UNICODE_ESCAPE_INVALID: u32 = 6;
+
 // keywords: mod, use, self, super, extern, goto, label, break, return, while, match, if, then, else, let, as, type, macro, magic, attribute, mut
 
 named!(pub p_skip0<Span, ()>, map!(
@@ -569,6 +608,14 @@ named!(pub p_skip0<Span, ()>, map!(
             (())
         )
     )), |_| ()));
+
+///////////////////
+// Begin Tokens  //
+///////////////////
+
+named!(pub p_scope_separator<Span, ()>, do_parse!(tag!("::") >> p_skip0 >> (())));
+
+named!(pub p_eq<Span, ()>, do_parse!(tag!("=") >> p_skip0 >> (())));
 
 fn is_id_char(chr: char) -> bool {
     chr.is_ascii_alphanumeric() || chr == '_'
@@ -599,9 +646,9 @@ pub fn p_simple_id(input: Span) -> IResult<Span, SimpleIdentifier> {
     let (input, simple_id) = try_parse!(input, _sid);
     let (input, _) = try_parse!(input, p_skip0);
     if simple_id.0.len() == 1 && simple_id.0.starts_with("_") {
-        IResult::Error(error_code!(ErrorKind::Custom(0)))
+        IResult::Error(error_code!(ErrorKind::Custom(ERR_SIMPLE_ID_ONLY_UNDERSCORE)))
     } else if simple_id.0.len() > 127 {
-        IResult::Error(error_code!(ErrorKind::Custom(1)))
+        IResult::Error(error_code!(ErrorKind::Custom(ERR_SIMPLE_ID_TOO_LONG)))
     } else if simple_id.0 == "mod" || simple_id.0 == "use" || simple_id.0 == "self" ||
               simple_id.0 == "super" || simple_id.0 == "extern" ||
               simple_id.0 == "magic" ||
@@ -615,13 +662,206 @@ pub fn p_simple_id(input: Span) -> IResult<Span, SimpleIdentifier> {
               simple_id.0 == "match" ||
               simple_id.0 == "while" ||
               simple_id.0 == "as" {
-        IResult::Error(error_code!(ErrorKind::Custom(2)))
+        IResult::Error(error_code!(ErrorKind::Custom(ERR_SIMPLE_ID_KEYWORD)))
     } else {
         IResult::Done(input, simple_id)
     }
 }
 
-named!(pub p_scope_separator<Span, ()>, do_parse!(tag!("::") >> p_skip0 >> (())));
+fn p_dec_int(input: Span) -> IResult<Span, u64> {
+    let (input, parsed) = try_parse!(input, is_a!("_0123456789"));
+
+    let mut string = parsed.to_string();
+    unsafe {
+        string.as_mut_vec().retain(|byte| *byte != 95u8);
+    }
+
+    match u64::from_str_radix(&string, 10) {
+        Ok(int) => IResult::Done(input, int),
+        Err(_) => IResult::Error(error_code!(ErrorKind::Custom(ERR_INT_NOT_A_U64))),
+    }
+}
+
+fn p_bin_int(input: Span) -> IResult<Span, u64> {
+    let (input, _) = try_parse!(input, tag!("0b"));
+    let (input, parsed) = try_parse!(input, is_a!("_01"));
+
+    let mut string = parsed.to_string();
+    unsafe {
+        string.as_mut_vec().retain(|byte| *byte != 95u8);
+    }
+
+    match u64::from_str_radix(&string, 2) {
+        Ok(int) => IResult::Done(input, int),
+        Err(_) => IResult::Error(error_code!(ErrorKind::Custom(ERR_INT_NOT_A_U64))),
+    }
+}
+
+fn p_hex_int(input: Span) -> IResult<Span, u64> {
+    let (input, _) = try_parse!(input, tag!("0x"));
+    let (input, parsed) = try_parse!(input, is_a!("_0123456789ABCDEF"));
+
+    let mut string = parsed.to_string();
+    unsafe {
+        string.as_mut_vec().retain(|byte| *byte != 95u8);
+    }
+
+    match u64::from_str_radix(&string, 16) {
+        Ok(int) => IResult::Done(input, int),
+        Err(_) => IResult::Error(error_code!(ErrorKind::Custom(ERR_INT_NOT_A_U64))),
+    }
+}
+
+named!(p_int_suffix<Span, IntSuffix>, alt!(
+    do_parse!(
+        tag!("U") >>
+        ret: alt!(
+            value!(IntSuffix::U8, tag!("8")) |
+            value!(IntSuffix::U16, tag!("16")) |
+            value!(IntSuffix::U32, tag!("32")) |
+            value!(IntSuffix::U64, tag!("64")) |
+            value!(IntSuffix::USize, tag!("Size"))
+        ) >>
+        (ret)
+    ) |
+    do_parse!(
+        tag!("I") >>
+        ret: alt!(
+            value!(IntSuffix::I8, tag!("8")) |
+            value!(IntSuffix::I16, tag!("16")) |
+            value!(IntSuffix::I32, tag!("32")) |
+            value!(IntSuffix::I64, tag!("64")) |
+            value!(IntSuffix::ISize, tag!("Size"))
+        ) >>
+        (ret)
+    )
+));
+
+named!(p_int_literal<Span, IntLiteral>, do_parse!(
+    start: position!() >>
+    int: alt!(p_bin_int | p_hex_int | p_dec_int) >>
+    suffix: opt!(p_int_suffix) >>
+    end: position!() >>
+    p_skip0 >>
+    (IntLiteral(int, suffix, Position::new(start, end)))
+));
+
+fn p_float_without_suffix(input: Span) -> IResult<Span, f64> {
+    let (input, pre_dot) = try_parse!(input, is_a!("_0123456789"));
+    let (input, _) = try_parse!(input, tag!("."));
+    let (input, post_dot) = try_parse!(input, is_a!("_0123456789"));
+
+    let (input, exponent) = try_parse!(input,
+                                       opt!(map!(do_parse!(
+        tag!("e") >>
+        sign: opt!(alt!(tag!("+") | tag!("-"))) >>
+        data: is_a!("_0123456789")
+        >> (sign, data)
+    ),
+                                                 |(sign, data)| {
+        let sign = sign.map_or("".to_string(), |span| span.fragment.to_string());
+        let mut string = String::with_capacity(sign.len() + data.fragment.len() + 1);
+        string.push_str("e");
+        string.push_str(&sign);
+        string.push_str(data.fragment);
+        string
+    })));
+    let exponent = exponent.unwrap_or("".to_string());
+
+    let mut string = String::with_capacity(pre_dot.fragment.len() + post_dot.fragment.len() +
+                                           exponent.len());
+    string.push_str(pre_dot.fragment);
+    string.push_str(post_dot.fragment);
+    string.push_str(&exponent);
+    unsafe {
+        string.as_mut_vec().retain(|byte| *byte != 95u8);
+    }
+
+    match f64::from_str(&string) {
+        Ok(float) => IResult::Done(input, float),
+        Err(_) => IResult::Error(error_code!(ErrorKind::Custom(ERR_FLOAT_NOT_A_F64))),
+    }
+}
+
+named!(p_float_suffix<Span, FloatSuffix>, alt!(
+    value!(FloatSuffix::F32, tag!("F32")) |
+    value!(FloatSuffix::F64, tag!("F64"))
+));
+
+named!(p_float_literal<Span, FloatLiteral>, do_parse!(
+    start: position!() >>
+    float: p_float_without_suffix >>
+    suffix: opt!(p_float_suffix) >>
+    end: position!() >>
+    p_skip0 >>
+    (FloatLiteral(float, suffix, Position::new(start, end)))
+));
+
+named!(p_x_escape<Span, String>, map!(do_parse!(
+    tag!("\\x") >>
+    first: one_of!("01234567") >>
+    second: one_of!("0123456789ABCDEF") >>
+    ((first, second))
+), |(first, second)| {
+    let mut string = String::with_capacity(2);
+    string.push(first);
+    string.push(second);
+    char::from(u8::from_str_radix(&string, 16).unwrap()).to_string()
+}));
+
+fn _p_u_escape(input: Span) -> IResult<Span, String> {
+    let (input, hex_digits) = try_parse!(input, is_a!("0123456789ABCDEF"));
+
+    if hex_digits.fragment.len() > 6 {
+        IResult::Error(error_code!(ErrorKind::Custom(ERR_STRING_UNICODE_ESCAPE_TOO_LONG)))
+    } else {
+        match char::try_from(u32::from_str_radix(hex_digits.fragment, 16).unwrap()) {
+            Ok(chr) => IResult::Done(input, chr.to_string()),
+            Err(_) => {
+                IResult::Error(error_code!(ErrorKind::Custom(ERR_STRING_UNICODE_ESCAPE_INVALID)))
+            }
+        }
+
+    }
+}
+
+named!(p_u_escape<Span, String>, do_parse!(
+    tag!("\\u{") >>
+    escaped: _p_u_escape >>
+    tag!("}") >>
+    (escaped)
+));
+
+named!(p_string_inner<Span, String>, map!(many0!(alt!(
+    map!(is_not!(r#"\""#), |span| span.fragment.to_string()) |
+    value!("\0".to_string(), tag!("\\0")) |
+    value!("\t".to_string(), tag!("\\t")) |
+    value!("\n".to_string(), tag!("\\n")) |
+    value!("\\".to_string(), tag!("\\\\")) |
+    value!("\"".to_string(), tag!("\\\"")) |
+    p_x_escape |
+    p_u_escape
+)), |strings| {
+    let mut ret = String::new();
+    for string in strings {
+        ret.push_str(&string);
+    }
+    ret
+}));
+
+named!(p_string_literal<Span, StringLiteral>, do_parse!(
+    start: position!() >>
+    tag!("\"") >>
+    string: p_string_inner >>
+    tag!("\"") >>
+    end: position!() >>
+    p_skip0 >>
+    (StringLiteral(string, Position::new(start, end)))
+));
+
+///////////////////
+//   End Tokens  //
+///////////////////
 
 named!(pub p_id<Span, Identifier>, map!(
     separated_list!(p_scope_separator, p_simple_id),
@@ -631,6 +871,12 @@ named!(pub p_id<Span, Identifier>, map!(
     }
 ));
 
+named!(pub p_literal<Span, Literal>, alt!(
+    map!(p_float_literal, Literal::Float) |
+    map!(p_int_literal, Literal::Int) |
+    map!(p_string_literal, Literal::String)
+));
+
 // pub enum MetaItem {
 //     Nullary(Identifier, Position),
 //     Pair(Identifier, Literal, Position),
@@ -638,8 +884,8 @@ named!(pub p_id<Span, Identifier>, map!(
 //     Args(Identifier, Vec<MetaItem>, Position),
 // }
 
-named!(pub p_meta_item_nullary<Span, MetaItem>, map!(p_simple_id, MetaItem::Nullary));
-
+// named!(pub p_meta_item_nullary<Span, MetaItem>, map!(p_simple_id, MetaItem::Nullary));
+//
 // named!(pub p_meta_item_pair<Span, MetaItem>, do_parse!(
 //     id: p_simple_id >>
 //     p_eq >>
@@ -727,4 +973,138 @@ fn test_id() {
     works!(p_id, "a::_a::__::t5ö", 2);
     works!(p_id, "a  ::  _a::__    ::  t5  ö", 2);
     fails!(p_id, "");
+}
+
+#[cfg(test)]
+macro_rules! test_int_lit {
+    ($input:expr, $exp:expr) => {
+        {
+            match p_literal(Span::new($input)).unwrap() {
+                (_, Literal::Int(lit)) => {
+                    assert_eq!(lit.0, $exp);
+                    assert!(lit.1.is_none());
+                }
+                _ => panic!("Did not parse an integer literal"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+macro_rules! test_float_lit {
+    ($input:expr, $exp:expr) => {
+        {
+            match p_literal(Span::new($input)).unwrap() {
+                (_, Literal::Float(lit)) => {
+                    assert_eq!(lit.0, $exp);
+                    assert!(lit.1.is_none());
+                }
+                _ => panic!("Did not parse a float literal"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+macro_rules! test_string_lit {
+    ($input:expr, $exp:expr) => {
+        {
+            match p_literal(Span::new($input)).unwrap() {
+                (_, Literal::String(lit)) => {
+                    assert_eq!(lit.0, $exp);
+                }
+                _ => panic!("Did not parse a string literal"),
+            }
+        }
+    }
+}
+
+#[test]
+fn test_literal() {
+    test_int_lit!("0ö", 0);
+    test_int_lit!("_0 ", 0);
+    test_int_lit!("0_ ", 0);
+    test_int_lit!("012345 ", 12345);
+    test_int_lit!("__01____23_45__ ", 12345);
+    test_int_lit!("0b__001_01_ ", 0b__001_01_);
+    test_int_lit!("0x123_ABF ", 0x123_ABF);
+    works_check!(p_literal, "0U8 ", 0, Literal::Int(_));
+    works_check!(p_literal, "0U16 ", 0, Literal::Int(_));
+    works_check!(p_literal, "0U32 ", 0, Literal::Int(_));
+    works_check!(p_literal, "0U64 ", 0, Literal::Int(_));
+    works_check!(p_literal, "0USize ", 0, Literal::Int(_));
+    works_check!(p_literal, "0x123I8 ", 0, Literal::Int(_));
+    works_check!(p_literal, "0b01101_0110__1I16 ", 0, Literal::Int(_));
+    works_check!(p_literal, "0I32 ", 0, Literal::Int(_));
+    works_check!(p_literal, "0I64 ", 0, Literal::Int(_));
+    works_check!(p_literal, "0ISize ", 0, Literal::Int(_));
+
+    fails!(p_literal, "-5 ");
+    fails!(p_literal, "_ ");
+    fails!(p_literal, "__ ");
+    not_complete!(p_literal, "0b2 ");
+    not_complete!(p_literal, "0xG ");
+    not_complete!(p_literal, "0xf ");
+    not_complete!(p_literal, "0F32 ");
+
+    test_float_lit!("0.0ö", 0.0);
+    test_float_lit!("_0.0 ", 0.0);
+    test_float_lit!("0_.0 ", 0_.0);
+    test_float_lit!("0._0 ", 0.0);
+    test_float_lit!("0.0_ ", 0.0_);
+    test_float_lit!("0.0e42 ", 0.0e42);
+    test_float_lit!("0.0e4_2 ", 0.0e4_2);
+    test_float_lit!("0.0e+42 ", 0.0e+42);
+    test_float_lit!("0.0e-42 ", 0.0e-42);
+    test_float_lit!("00___0.0_00_0e-42 ", 00___0.0_00_0e-42);
+    test_float_lit!("0._ ", 0.0);
+    test_float_lit!("_.0 ", 0.0);
+    test_float_lit!("0._e42 ", 0.0e42);
+
+    works_check!(p_literal, "0.0F32 ", 0, Literal::Float(_));
+    works_check!(p_literal, "0.0F64 ", 0, Literal::Float(_));
+    works_check!(p_literal, "0_00.00_0F64 ", 0, Literal::Float(_));
+    works_check!(p_literal, "0.0e+42F32 ", 0, Literal::Float(_));
+    works_check!(p_literal, "0.0e+42F64 ", 0, Literal::Float(_));
+
+    not_complete!(p_literal, "0. ");
+    fails!(p_literal, ".0 ");
+    not_complete!(p_literal, "0.0U32 ");
+    fails!(p_literal, "-0.5 ");
+    not_complete!(p_literal, "0.0e_ ");
+    not_complete!(p_literal, "0e42 ");
+
+    test_string_lit!(r#""""#, "");
+    test_string_lit!(r#""a""#, "a");
+    test_string_lit!(r#""ö""#, "ö");
+    test_string_lit!(r#""🦄""#, "🦄");
+    test_string_lit!(r#""💂🏾""#, "💂🏾");
+    test_string_lit!(r#""abc""#, "abc");
+    test_string_lit!(r#""\"""#, "\"");
+    test_string_lit!(r#""\\""#, "\\");
+    test_string_lit!(r#""\n""#, "\n");
+    test_string_lit!(r#""\t""#, "\t");
+    test_string_lit!(r#""\0""#, "\0");
+    test_string_lit!(r#""'""#, "'");
+    test_string_lit!(r#""\x0F""#, "\x0F");
+    test_string_lit!(r#""\u{0}""#, "\u{0}");
+    test_string_lit!(r#""\u{A}""#, "\u{A}");
+    test_string_lit!(r#""\u{012345}""#, "\u{012345}");
+    test_string_lit!(r#""\x7AA""#, "\x7AA");
+
+    fails!(p_literal, r#"""#);
+    fails!(p_literal, r#""\ö""#);
+    fails!(p_literal, r#""\x""#);
+    fails!(p_literal, r#""\xA""#);
+    fails!(p_literal, r#""\xaa""#);
+    fails!(p_literal, r#""\x80""#);
+    fails!(p_literal, r#""\xG4""#);
+    fails!(p_literal, r#""\x4G""#);
+    fails!(p_literal, r#""\u""#);
+    fails!(p_literal, r#""\u1234""#);
+    fails!(p_literal, r#""\u{}""#);
+    fails!(p_literal, r#""\u{""#);
+    fails!(p_literal, r#""\u{0123456}""#);
+    fails!(p_literal, r#""\u{a}""#);
+    not_complete!(p_literal, r#"""""#);
 }

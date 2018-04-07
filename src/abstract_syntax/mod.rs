@@ -64,11 +64,16 @@ macro_rules! works {
 
 #[cfg(test)]
 macro_rules! works_check {
-    ($parser:expr, $input:expr, $exp:expr, $check:ident) => {
+    ($parser:expr, $input:expr, $exp:expr, $check:pat) => {
         {
             if let ::nom::IResult::Done(i, o) = $parser(::nom_locate::LocatedSpan::new($input)) {
                 assert!(i.fragment.len() == $exp);
-                assert!(o.$check());
+                match o {
+                    $check => {},
+                    _ => {
+                        panic!("parser did not return the correct enum variant");
+                    }
+                }
             } else {
                 panic!("parser did not succeed");
             }
@@ -91,7 +96,7 @@ macro_rules! fails {
 macro_rules! not_complete {
     ($parser:expr, $input:expr) => {
         {
-            if let ::nom::IResult::Done(i, o) = $parser(::nom_locate::LocatedSpan::new($input)) {
+            if let ::nom::IResult::Done(i, _) = $parser(::nom_locate::LocatedSpan::new($input)) {
                 assert!(i.fragment.len() > 0);
             }
         }
