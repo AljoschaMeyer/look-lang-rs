@@ -66,7 +66,7 @@ impl Pos for Identifier {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct IndexLiteral(pub String, pub Position);
+pub struct IndexLiteral(pub u64, pub Position);
 
 impl Pos for IndexLiteral {
     fn pos(&self) -> Position {
@@ -595,6 +595,7 @@ pub const ERR_INT_NOT_A_U64: u32 = 3;
 pub const ERR_FLOAT_NOT_A_F64: u32 = 4;
 pub const ERR_STRING_UNICODE_ESCAPE_TOO_LONG: u32 = 5;
 pub const ERR_STRING_UNICODE_ESCAPE_INVALID: u32 = 6;
+pub const ERR_MACRO_INVALID_CHAR: u32 = 7;
 
 // keywords: mod, use, self, super, extern, goto, label, break, return, while, match, if, then, else, let, as, type, macro, magic, attribute, mut
 
@@ -609,13 +610,25 @@ named!(pub p_skip0<Span, ()>, map!(
         )
     )), |_| ()));
 
+macro_rules! list (
+    ($i:expr, $submac:ident!( $($args:tt)* )) => (
+        separated_list!($i, do_parse!(p_skip0 >> p_comma >> (())), $submac!($($args)*));
+    );
+    ($i:expr, $f:expr) => (
+        list!($i, call!($f));
+    );
+);
+
 ///////////////////
 // Begin Tokens  //
 ///////////////////
 
 named!(pub p_scope_separator<Span, ()>, do_parse!(tag!("::") >> p_skip0 >> (())));
-
 named!(pub p_eq<Span, ()>, do_parse!(tag!("=") >> p_skip0 >> (())));
+named!(pub p_lparen<Span, ()>, do_parse!(tag!("(") >> p_skip0 >> (())));
+named!(pub p_rparen<Span, ()>, do_parse!(tag!(")") >> p_skip0 >> (())));
+named!(pub p_comma<Span, ()>, do_parse!(tag!(",") >> p_skip0 >> (())));
+named!(pub p_dollar<Span, ()>, do_parse!(tag!("$") >> p_skip0 >> (())));
 
 fn is_id_char(chr: char) -> bool {
     chr.is_ascii_alphanumeric() || chr == '_'
@@ -821,7 +834,6 @@ fn _p_u_escape(input: Span) -> IResult<Span, String> {
                 IResult::Error(error_code!(ErrorKind::Custom(ERR_STRING_UNICODE_ESCAPE_INVALID)))
             }
         }
-
     }
 }
 
@@ -877,21 +889,95 @@ named!(pub p_literal<Span, Literal>, alt!(
     map!(p_string_literal, Literal::String)
 ));
 
-// pub enum MetaItem {
-//     Nullary(Identifier, Position),
-//     Pair(Identifier, Literal, Position),
-//     LitArg(Identifier, Literal, Position),
-//     Args(Identifier, Vec<MetaItem>, Position),
-// }
+named!(pub p_meta_item_nullary<Span, MetaItem>, map!(p_simple_id, MetaItem::Nullary));
 
-// named!(pub p_meta_item_nullary<Span, MetaItem>, map!(p_simple_id, MetaItem::Nullary));
-//
-// named!(pub p_meta_item_pair<Span, MetaItem>, do_parse!(
-//     id: p_simple_id >>
-//     p_eq >>
-//     lit: p_literal >>
-//     (MetaItem::Pair(id, lit, Position::from_positions(id.pos(), lit.pos())))
-// ));
+named!(pub p_meta_item_pair<Span, MetaItem>, map!(do_parse!(
+    id: p_simple_id >>
+    p_eq >>
+    lit: p_literal >>
+    ((id, lit))), |(id, lit)| {
+        let pos = Position::from_positions(id.pos(), lit.pos());
+        MetaItem::Pair(id, lit, pos)
+    }));
+
+named!(pub p_meta_item_lit_arg<Span, MetaItem>, do_parse!(
+    start: position!() >>
+    id: p_simple_id >>
+    p_lparen >>
+    lit: p_literal >>
+    p_rparen >>
+    end: position!() >>
+    (MetaItem::LitArg(id, lit, Position::new(start, end)))
+));
+
+named!(pub p_meta_item_args<Span, MetaItem>, do_parse!(
+    start: position!() >>
+    id: p_simple_id >>
+    p_lparen >>
+    inner: list!(p_meta_item) >>
+    p_rparen >>
+    end: position!() >>
+    (MetaItem::Args(id, inner, Position::new(start, end)))
+));
+
+named!(pub p_meta_item<Span, MetaItem>, alt!(
+    p_meta_item_lit_arg |
+    p_meta_item_args |
+    p_meta_item_pair |
+    p_meta_item_nullary
+));
+
+fn p_macro_inv_args(mut input: Span) -> IResult<Span, String> {
+    let mut paren_count = 1;
+    let mut args = String::new();
+
+    loop {
+        let (remaining, took) = try_parse!(input, take!(1));
+        input = remaining;
+        let chr = char::from_str(took.fragment).unwrap();
+
+        if !(chr.is_ascii_graphic() || chr == ' ' || chr == '\n') {
+            return IResult::Error(error_code!(ErrorKind::Custom(ERR_MACRO_INVALID_CHAR)));
+        }
+
+        if chr == ')' {
+            paren_count -= 1;
+        }
+
+        if paren_count == 0 {
+            return IResult::Done(input, args);
+        } else {
+            if chr == '(' {
+                paren_count += 1;
+            }
+            args.push(chr)
+        }
+    }
+}
+
+named!(pub p_macro_invocation<Span, MacroInvocation>, do_parse!(
+    start: position!() >>
+    p_dollar >>
+    id: p_id >>
+    p_lparen >>
+    args: p_macro_inv_args >>
+    end: position!() >>
+    p_skip0 >>
+    (MacroInvocation(id, args, Position::new(start, end)))
+));
+
+named!(pub p_index_literal<Span, IndexLiteral>, do_parse!(
+    start: position!() >>
+    int_str: is_a!("0123456789") >>
+    end: position!() >>
+    p_skip0 >>
+    (IndexLiteral(u64::from_str_radix(int_str.fragment, 10).unwrap(), Position::new(start, end)))
+));
+
+named!(pub p_index<Span, Index>, alt!(
+    map!(p_index_literal, Index::Literal) |
+    map!(p_macro_invocation, Index::Macro)
+));
 
 #[test]
 fn test_skip0() {
@@ -1107,4 +1193,32 @@ fn test_literal() {
     fails!(p_literal, r#""\u{0123456}""#);
     fails!(p_literal, r#""\u{a}""#);
     not_complete!(p_literal, r#"""""#);
+}
+
+#[test]
+fn test_meta_item() {
+    works_check!(p_meta_item, "aö", 2, MetaItem::Nullary(_));
+    works_check!(p_meta_item, "a = 42.0F32", 0, MetaItem::Pair(_, _, _));
+    works_check!(p_meta_item, "a(42.0F32)", 0, MetaItem::LitArg(_, _, _));
+    works_check!(p_meta_item, "a(b = 42 , c(d = \"\\\\\"))", 0, MetaItem::Args(_, _, _));
+}
+
+#[test]
+fn test_macro_invocation() {
+    works!(p_macro_invocation, "$a()", 0);
+    works!(p_macro_invocation, "$a(())", 0);
+    works!(p_macro_invocation, "$a::b(a)", 0);
+    works!(p_macro_invocation, "$a(j(f   e)wjf8--fhewf[{)", 0);
+
+    fails!(p_macro_invocation, "$a(ö");
+    fails!(p_macro_invocation, "$a(()");
+    not_complete!(p_macro_invocation, "$a())");
+}
+
+#[test]
+fn test_index() {
+    works_check!(p_index, "0404", 0, Index::Literal(_));
+    works_check!(p_index, "0404   ", 0, Index::Literal(_));
+    works_check!(p_index, "$a()", 0, Index::Macro(_));
+    works_check!(p_index, "$a()   ", 0, Index::Macro(_));
 }
