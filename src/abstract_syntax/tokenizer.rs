@@ -3,13 +3,34 @@ use std::str::{Bytes, FromStr};
 use std::num::ParseIntError;
 use std::num::ParseFloatError;
 
-#[derive(Debug, PartialEq)]
-pub struct Token(TokenType, Position, Position);
+pub fn tokenize(input: &str) -> Vec<Token> {
+    Tokenizer::new(input).collect()
+}
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct Token(pub TokenType, pub SourceRange);
+
+impl SourceRanged for Token {
+    fn source_range(&self) -> SourceRange {
+        self.1
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Position {
     pub line: usize,
     pub col: usize,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct SourceRange {
+    pub from: Position,
+    pub to: Position,
+}
+
+pub trait SourceRanged {
+    /// Get the SourceRange of this value.
+    fn source_range(&self) -> SourceRange;
 }
 
 #[derive(Debug, PartialEq)]
@@ -74,6 +95,10 @@ pub enum TokenType {
     StringInvalidEscape,
 }
 
+impl Eq for TokenType {
+    // Float literal never contains NaN, Inf or -Inf
+}
+
 pub struct Tokenizer<'a>(Peekable<_Tokenizer<'a>>);
 
 impl<'a> Tokenizer<'a> {
@@ -83,6 +108,19 @@ impl<'a> Tokenizer<'a> {
 
     pub fn peek(&mut self) -> Option<&Token> {
         self.0.peek()
+    }
+
+    pub fn consume(&mut self, tt: TokenType) -> Result<Token, Option<Token>> {
+        match self.next() {
+            Some(token) => {
+                if token.0 == tt {
+                    Ok(token)
+                } else {
+                    Err(Some(token))
+                }
+            }
+            None => Err(None),
+        }
     }
 }
 
@@ -113,13 +151,15 @@ impl<'a> _Tokenizer<'a> {
 
     fn token(&self, tt: TokenType, start_line: usize, start_col: usize) -> Token {
         Token(tt,
-              Position {
-                  line: start_line,
-                  col: start_col,
-              },
-              Position {
-                  line: self.line,
-                  col: self.col,
+              SourceRange {
+                  from: Position {
+                      line: start_line,
+                      col: start_col,
+                  },
+                  to: Position {
+                      line: self.line,
+                      col: self.col,
+                  },
               })
     }
 
@@ -338,10 +378,11 @@ impl<'a> Iterator for _Tokenizer<'a> {
                     start_col,
                 } => {
                     match self.peek() {
-                        // [0-9A-Za-z]
+                        // [0-9A-Za-z_]
                         Some(b @ 48...57) |
                         Some(b @ 65...90) |
-                        Some(b @ 97...122) => {
+                        Some(b @ 97...122) |
+                        Some(b @ 95) => {
                             state = State::Id {
                                 chars: vec![95, b],
                                 start_line,
@@ -362,10 +403,11 @@ impl<'a> Iterator for _Tokenizer<'a> {
                     start_col,
                 } => {
                     match self.peek() {
-                        // [0-9A-Za-z]
+                        // [0-9A-Za-z_]
                         Some(b @ 48...57) |
                         Some(b @ 65...90) |
-                        Some(b @ 97...122) => {
+                        Some(b @ 97...122) |
+                        Some(b @ 95) => {
                             chars.push(b);
                             self.next_byte();
                         }
@@ -1109,9 +1151,14 @@ fn test_tokenizer() {
                                  TokenType::Eq,
                                  TokenType::LParen]);
 
-    let tok = Tokenizer::new("abc use mod self super deps magic goto label break return while match if then else let as type macro mut abcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFG abcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGH");
+    let tok = Tokenizer::new("abc __ _9 a_b _a a_ use mod self super deps magic goto label break return while match if then else let as type macro mut abcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFG abcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGHabcdefghABCDEFGH");
     assert_same_token_types(tok.collect::<Vec<Token>>(),
                             vec![TokenType::Id("abc".to_string()),
+                                TokenType::Id("__".to_string()),
+                                TokenType::Id("_9".to_string()),
+                                TokenType::Id("a_b".to_string()),
+                                TokenType::Id("_a".to_string()),
+                                TokenType::Id("a_".to_string()),
                                  TokenType::Use,
                                  TokenType::Mod,
                                  TokenType::Selff,
