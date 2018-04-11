@@ -16,9 +16,18 @@ pub trait Pos {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Attributes(Vec<MetaItem>, Position);
+pub struct Attributes(Vec<Attribute>, Position);
 
 impl Pos for Attributes {
+    fn pos(&self) -> Position {
+        self.1
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Attribute(MetaItem, Position);
+
+impl Pos for Attribute {
     fn pos(&self) -> Position {
         self.1
     }
@@ -130,7 +139,7 @@ pub enum Type {
     PtrMut(Box<Type>, Position),
     Array(Box<Type>, Position),
     ProductRepeated(Box<Type>, Index, Position),
-    Product(TypeList),
+    Product(TypeList, Position),
     Fun(TypeList, Box<Type>, Position),
     TypeApplication(Identifier, TypeApplicationList, Position),
 }
@@ -145,7 +154,7 @@ impl Pos for Type {
             &Type::PtrMut(_, pos) => pos,
             &Type::Array(_, pos) => pos,
             &Type::ProductRepeated(_, _, pos) => pos,
-            &Type::Product(ref inner) => inner.pos(),
+            &Type::Product(_, pos) => pos,
             &Type::Fun(_, _, pos) => pos,
             &Type::TypeApplication(_, _, pos) => pos,
         }
@@ -533,19 +542,6 @@ impl Pos for MacroDef {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum AttributeDef {
-    Id(Identifier),
-}
-
-impl Pos for AttributeDef {
-    fn pos(&self) -> Position {
-        match self {
-            &AttributeDef::Id(ref inner) => inner.pos(),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
 pub struct Module(pub Vec<(Attributes, Item)>, pub Position);
 
 impl Pos for Module {
@@ -560,7 +556,6 @@ pub enum Item {
     Mod(bool, SimpleIdentifier, Box<Module>, Position),
     TypeDef(bool, SimpleIdentifier, TypeDef, Position),
     Macro(bool, SimpleIdentifier, MacroDef, Position),
-    Attribute(bool, SimpleIdentifier, AttributeDef, Position),
     Let(bool, Pattern, Expression, Position),
     Ffi(SimpleIdentifier, FfiBlock, Position),
 }
@@ -572,7 +567,6 @@ impl Pos for Item {
             &Item::Mod(_, _, _, pos) => pos,
             &Item::TypeDef(_, _, _, pos) => pos,
             &Item::Macro(_, _, _, pos) => pos,
-            &Item::Attribute(_, _, _, pos) => pos,
             &Item::Let(_, _, _, pos) => pos,
             &Item::Ffi(_, _, pos) => pos,
         }
@@ -596,6 +590,7 @@ pub const ERR_FLOAT_NOT_A_F64: u32 = 4;
 pub const ERR_STRING_UNICODE_ESCAPE_TOO_LONG: u32 = 5;
 pub const ERR_STRING_UNICODE_ESCAPE_INVALID: u32 = 6;
 pub const ERR_MACRO_INVALID_CHAR: u32 = 7;
+pub const ERR_ID_EMPTY: u32 = 8;
 
 // keywords: mod, use, self, super, extern, goto, label, break, return, while, match, if, then, else, let, as, type, macro, magic, attribute, mut
 
@@ -619,16 +614,83 @@ macro_rules! list (
     );
 );
 
+macro_rules! would_match (
+    ($i:expr, $submac:ident!( $($args:tt)* )) => (
+        do_parse!($i, opt: opt!($submac!($($args)*)) >> (opt.is_some()));
+    );
+    ($i:expr, $f:expr) => (
+        would_match!($i, call!($f));
+    );
+);
+
+macro_rules! opt_attrs (
+    ($i:expr, $submac:ident!( $($args:tt)* )) => (
+        alt!($i,
+            do_parse!(
+                attrs: p_attributes >>
+                p_lbrace >>
+                inner: $submac!($($args)*) >>
+                p_rbrace >>
+                (attrs, inner)
+            ) |
+            do_parse!(
+                start: position!() >>
+                inner: $submac!($($args)*) >>
+                (Attributes(vec![], Position::new(start, start)), inner)
+            )
+        )
+    );
+    ($i:expr, $f:expr) => (
+        opt_attrs!($i, call!($f));
+    );
+);
+
+macro_rules! opt_attrs_flat (
+    ($i:expr, $submac:ident!( $($args:tt)* )) => (
+        alt!($i,
+            do_parse!(
+                attrs: p_attributes >>
+                p_lbrace >>
+                inner: $submac!($($args)*) >>
+                p_rbrace >>
+                (attrs, inner.0, inner.1)
+            ) |
+            do_parse!(
+                start: position!() >>
+                inner: $submac!($($args)*) >>
+                (Attributes(vec![], Position::new(start, start)), inner.0, inner.1)
+            )
+        )
+    );
+    ($i:expr, $f:expr) => (
+        opt_attrs_flat!($i, call!($f));
+    );
+);
+
 ///////////////////
 // Begin Tokens  //
 ///////////////////
 
-named!(pub p_scope_separator<Span, ()>, do_parse!(tag!("::") >> p_skip0 >> (())));
 named!(pub p_eq<Span, ()>, do_parse!(tag!("=") >> p_skip0 >> (())));
 named!(pub p_lparen<Span, ()>, do_parse!(tag!("(") >> p_skip0 >> (())));
 named!(pub p_rparen<Span, ()>, do_parse!(tag!(")") >> p_skip0 >> (())));
+named!(pub p_lbracket<Span, ()>, do_parse!(tag!("[") >> p_skip0 >> (())));
+named!(pub p_rbracket<Span, ()>, do_parse!(tag!("]") >> p_skip0 >> (())));
+named!(pub p_lbrace<Span, ()>, do_parse!(tag!("{") >> p_skip0 >> (())));
+named!(pub p_rbrace<Span, ()>, do_parse!(tag!("}") >> p_skip0 >> (())));
+named!(pub p_langle<Span, ()>, do_parse!(tag!("<") >> p_skip0 >> (())));
+named!(pub p_rangle<Span, ()>, do_parse!(tag!(">") >> p_skip0 >> (())));
 named!(pub p_comma<Span, ()>, do_parse!(tag!(",") >> p_skip0 >> (())));
 named!(pub p_dollar<Span, ()>, do_parse!(tag!("$") >> p_skip0 >> (())));
+named!(pub p_colon<Span, ()>, do_parse!(tag!(":") >> p_skip0 >> (())));
+named!(pub p_hash<Span, ()>, do_parse!(tag!("#") >> p_skip0 >> (())));
+named!(pub p_at<Span, ()>, do_parse!(tag!("@") >> p_skip0 >> (())));
+named!(pub p_tilde<Span, ()>, do_parse!(tag!("~") >> p_skip0 >> (())));
+named!(pub p_semi<Span, ()>, do_parse!(tag!(";") >> p_skip0 >> (())));
+named!(pub p_scope_separator<Span, ()>, do_parse!(tag!("::") >> p_skip0 >> (())));
+named!(pub p_arrow<Span, ()>, do_parse!(tag!("->") >> p_skip0 >> (())));
+
+named!(pub p_start_attribute<Span, ()>, do_parse!(p_hash >> p_lbracket >> (())));
 
 fn is_id_char(chr: char) -> bool {
     chr.is_ascii_alphanumeric() || chr == '_'
@@ -875,13 +937,16 @@ named!(p_string_literal<Span, StringLiteral>, do_parse!(
 //   End Tokens  //
 ///////////////////
 
-named!(pub p_id<Span, Identifier>, map!(
-    separated_list!(p_scope_separator, p_simple_id),
-    |ids| {
+pub fn p_id(input: Span) -> IResult<Span, Identifier> {
+    let (input, ids) = try_parse!(input, separated_list!(p_scope_separator, p_simple_id));
+
+    if ids.len() > 0 {
         let pos = Position::from_positions(ids.first().unwrap().1, ids.last().unwrap().1);
-        Identifier(ids, pos)
+        IResult::Done(input, Identifier(ids, pos))
+    } else {
+        return IResult::Error(error_code!(ErrorKind::Custom(ERR_ID_EMPTY)));
     }
-));
+}
 
 named!(pub p_literal<Span, Literal>, alt!(
     map!(p_float_literal, Literal::Float) |
@@ -925,6 +990,24 @@ named!(pub p_meta_item<Span, MetaItem>, alt!(
     p_meta_item_args |
     p_meta_item_pair |
     p_meta_item_nullary
+));
+
+named!(pub p_attribute<Span, Attribute>, do_parse!(
+    start: position!() >>
+    p_start_attribute >>
+    meta: p_meta_item >>
+    p_rbracket >>
+    end: position!() >>
+    (Attribute(meta, Position::new(start, end)))
+));
+
+named!(pub p_attributes<Span, Attributes>, map!(
+    many1!(p_attribute), |attrs| {
+        let len = attrs.len();
+        let start_pos = attrs.get(0).unwrap().pos();
+        let end_pos = attrs.get(len - 1).unwrap().pos();
+        Attributes(attrs, Position::from_positions(start_pos, end_pos))
+    }
 ));
 
 fn p_macro_inv_args(mut input: Span) -> IResult<Span, String> {
@@ -979,246 +1062,494 @@ named!(pub p_index<Span, Index>, alt!(
     map!(p_macro_invocation, Index::Macro)
 ));
 
-#[test]
-fn test_skip0() {
-    works!(p_skip0, "", 0);
-    works!(p_skip0, "a", 1);
-    works!(p_skip0, " ", 0);
-    works!(p_skip0, "   ", 0);
-    works!(p_skip0, "\n", 0);
-    works!(p_skip0, "   \n  \n\n  ", 0);
+named!(p_type_list<Span, TypeList>, do_parse!(
+    start: position!() >>
+    p_lparen >>
+    is_named: would_match!(opt_attrs!(do_parse!(p_simple_id >> p_colon >> p_type >> (())))) >>
+    ret: alt!(
+        cond_reduce!(is_named, do_parse!(
+            types: list!(opt_attrs_flat!(do_parse!(
+                id: p_simple_id >>
+                p_colon >>
+                the_type: p_type >>
+                (id, the_type)
+            ))) >>
+            p_rparen >>
+            end: position!() >>
+            (TypeList::Named(types, Position::new(start, end)))
+        )) |
+        do_parse!(
+            types: list!(p_type) >>
+            p_rparen >>
+            end: position!() >>
+            (TypeList::Anon(types, Position::new(start, end)))
+        )
+    ) >>
+    (ret)
+));
 
-    not_complete!(p_skip0, "\r");
-    not_complete!(p_skip0, "\t");
+named!(p_type_application_list<Span, TypeApplicationList>, do_parse!(
+    start: position!() >>
+    p_langle >>
+    is_named: would_match!(opt_attrs!(do_parse!(p_simple_id >> p_eq >> p_type >> (())))) >>
+    ret: alt!(
+        cond_reduce!(is_named, do_parse!(
+            types: list!(opt_attrs_flat!(do_parse!(
+                id: p_simple_id >>
+                p_eq >>
+                the_type: p_type >>
+                (id, the_type)
+            ))) >>
+            p_rangle >>
+            end: position!() >>
+            (TypeApplicationList::Named(types, Position::new(start, end)))
+        )) |
+        do_parse!(
+            types: list!(p_type) >>
+            p_rangle >>
+            end: position!() >>
+            (TypeApplicationList::Anon(types, Position::new(start, end)))
+        )
+    ) >>
+    (ret)
+));
 
-    not_complete!(p_skip0, "//");
-    not_complete!(p_skip0, "// ");
+named!(pub p_ptr<Span, Type>, do_parse!(
+    start: position!() >>
+    p_at >>
+    inner: p_type >>
+    end: position!() >>
+    (Type::Ptr(Box::new(inner), Position::new(start, end)))
+));
 
-    works!(p_skip0, "//\n", 0);
-    works!(p_skip0, "// \n", 0);
-    works!(p_skip0, "///\n", 0);
-    works!(p_skip0, "////\n", 0);
-    works!(p_skip0, "//\n//\n", 0);
-    works!(p_skip0, "//\na", 1);
-    works!(p_skip0, "// \rö\n   \n    /// /\n  a", 1);
-}
+named!(pub p_ptr_mut<Span, Type>, do_parse!(
+    start: position!() >>
+    p_tilde >>
+    inner: p_type >>
+    end: position!() >>
+    (Type::PtrMut(Box::new(inner), Position::new(start, end)))
+));
 
-#[test]
-fn test_simple_id() {
-    works!(p_simple_id, "_a", 0);
-    works!(p_simple_id, "_a   ", 0);
-    works!(p_simple_id, "a", 0);
-    works!(p_simple_id, "A", 0);
-    works!(p_simple_id, "aA", 0);
-    works!(p_simple_id, "__", 0);
-    works!(p_simple_id, "_9", 0);
-    works!(p_simple_id, "a9", 0);
-    works!(p_simple_id, "a_9", 0);
-    works!(p_simple_id, "_aöa", 3);
-    works!(p_simple_id,
-           "abcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefg",
-           0); // 127 characters
+named!(pub p_array<Span, Type>, do_parse!(
+    start: position!() >>
+    p_lbracket >>
+    inner: p_type >>
+    p_rbracket >>
+    end: position!() >>
+    (Type::Array(Box::new(inner), Position::new(start, end)))
+));
 
-    fails!(p_simple_id,
-           "abcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefgh"); // 128 characters
-    fails!(p_simple_id, "ö");
-    fails!(p_simple_id, "_");
-    fails!(p_simple_id, "-");
-    fails!(p_simple_id, "9");
-    fails!(p_simple_id, "9a");
-    fails!(p_simple_id, "-a");
-    fails!(p_simple_id, "");
+named!(pub p_type_macro_invocation<Span, Type>, map!(p_macro_invocation, Type::MacroInv));
 
-    fails!(p_simple_id, "pub");
-    works!(p_simple_id, "pubb", 0);
-    fails!(p_simple_id, "mod");
-    fails!(p_simple_id, "use");
-    fails!(p_simple_id, "self");
-    fails!(p_simple_id, "extern");
-    fails!(p_simple_id, "goto");
-    fails!(p_simple_id, "label");
-    fails!(p_simple_id, "break");
-    fails!(p_simple_id, "return");
-    fails!(p_simple_id, "while");
-    fails!(p_simple_id, "match");
-    fails!(p_simple_id, "if");
-    fails!(p_simple_id, "then");
-    fails!(p_simple_id, "else");
-    fails!(p_simple_id, "let");
-    fails!(p_simple_id, "as");
-    fails!(p_simple_id, "type");
-    fails!(p_simple_id, "macro");
-    fails!(p_simple_id, "magic");
-    fails!(p_simple_id, "attribute");
-    fails!(p_simple_id, "mut");
-}
+named!(pub p_type_attributed<Span, Type>, do_parse!(
+    start: position!() >>
+    stuff: opt_attrs!(p_nonattributed_type) >>
+    end: position!() >>
+    (Type::Attributed(stuff.0, Box::new(stuff.1), Position::new(start, end)))
+));
 
-#[test]
-fn test_id() {
-    works!(p_id, "aö", 2);
-    works!(p_id, "a::_a::__::t5ö", 2);
-    works!(p_id, "a  ::  _a::__    ::  t5  ö", 2);
-    fails!(p_id, "");
-}
+named!(pub p_product_repeated<Span, Type>, do_parse!(
+    start: position!() >>
+    p_lparen >>
+    inner: p_type >>
+    p_semi >>
+    index: p_index >>
+    p_rparen >>
+    end: position!() >>
+    (Type::ProductRepeated(Box::new(inner), index, Position::new(start, end)))
+));
 
-#[cfg(test)]
-macro_rules! test_int_lit {
-    ($input:expr, $exp:expr) => {
-        {
-            match p_literal(Span::new($input)).unwrap() {
-                (_, Literal::Int(lit)) => {
-                    assert_eq!(lit.0, $exp);
-                    assert!(lit.1.is_none());
-                }
-                _ => panic!("Did not parse an integer literal"),
-            }
-        }
-    }
-}
+named!(pub p_type_fun<Span, Type>, do_parse!(
+    start: position!() >>
+    args: p_type_list >>
+    p_arrow >>
+    return_type: p_type >>
+    end: position!() >>
+    (Type::Fun(args, Box::new(return_type), Position::new(start, end)))
+));
 
-#[cfg(test)]
-macro_rules! test_float_lit {
-    ($input:expr, $exp:expr) => {
-        {
-            match p_literal(Span::new($input)).unwrap() {
-                (_, Literal::Float(lit)) => {
-                    assert_eq!(lit.0, $exp);
-                    assert!(lit.1.is_none());
-                }
-                _ => panic!("Did not parse a float literal"),
-            }
-        }
-    }
-}
+named!(pub p_type_product<Span, Type>, do_parse!(
+    start: position!() >>
+    types: p_type_list >>
+    end: position!() >>
+    (Type::Product(types, Position::new(start, end)))
+));
 
-#[cfg(test)]
-macro_rules! test_string_lit {
-    ($input:expr, $exp:expr) => {
-        {
-            match p_literal(Span::new($input)).unwrap() {
-                (_, Literal::String(lit)) => {
-                    assert_eq!(lit.0, $exp);
-                }
-                _ => panic!("Did not parse a string literal"),
-            }
-        }
-    }
-}
+named!(pub p_type_type_application<Span, Type>, do_parse!(
+    start: position!() >>
+    id: p_id >>
+    p_langle >>
+    args: p_type_application_list >>
+    p_rangle >>
+    end: position!() >>
+    (Type::TypeApplication(id, args, Position::new(start, end)))
+));
 
-#[test]
-fn test_literal() {
-    test_int_lit!("0ö", 0);
-    test_int_lit!("_0 ", 0);
-    test_int_lit!("0_ ", 0);
-    test_int_lit!("012345 ", 12345);
-    test_int_lit!("__01____23_45__ ", 12345);
-    test_int_lit!("0b__001_01_ ", 0b__001_01_);
-    test_int_lit!("0x123_ABF ", 0x123_ABF);
-    works_check!(p_literal, "0U8 ", 0, Literal::Int(_));
-    works_check!(p_literal, "0U16 ", 0, Literal::Int(_));
-    works_check!(p_literal, "0U32 ", 0, Literal::Int(_));
-    works_check!(p_literal, "0U64 ", 0, Literal::Int(_));
-    works_check!(p_literal, "0USize ", 0, Literal::Int(_));
-    works_check!(p_literal, "0x123I8 ", 0, Literal::Int(_));
-    works_check!(p_literal, "0b01101_0110__1I16 ", 0, Literal::Int(_));
-    works_check!(p_literal, "0I32 ", 0, Literal::Int(_));
-    works_check!(p_literal, "0I64 ", 0, Literal::Int(_));
-    works_check!(p_literal, "0ISize ", 0, Literal::Int(_));
+named!(pub p_nonattributed_type<Span, Type>, alt!(
+    p_ptr | p_ptr_mut | p_array | p_type_macro_invocation | p_product_repeated |
+    p_type_fun | p_type_product | p_type_type_application | map!(p_id, Type::Id)
+));
 
-    fails!(p_literal, "-5 ");
-    fails!(p_literal, "_ ");
-    fails!(p_literal, "__ ");
-    not_complete!(p_literal, "0b2 ");
-    not_complete!(p_literal, "0xG ");
-    not_complete!(p_literal, "0xf ");
-    not_complete!(p_literal, "0F32 ");
+named!(pub p_type<Span, Type>, alt!(
+    p_nonattributed_type | p_type_attributed
+));
 
-    test_float_lit!("0.0ö", 0.0);
-    test_float_lit!("_0.0 ", 0.0);
-    test_float_lit!("0_.0 ", 0_.0);
-    test_float_lit!("0._0 ", 0.0);
-    test_float_lit!("0.0_ ", 0.0_);
-    test_float_lit!("0.0e42 ", 0.0e42);
-    test_float_lit!("0.0e4_2 ", 0.0e4_2);
-    test_float_lit!("0.0e+42 ", 0.0e+42);
-    test_float_lit!("0.0e-42 ", 0.0e-42);
-    test_float_lit!("00___0.0_00_0e-42 ", 00___0.0_00_0e-42);
-    test_float_lit!("0._ ", 0.0);
-    test_float_lit!("_.0 ", 0.0);
-    test_float_lit!("0._e42 ", 0.0e42);
+// #[test]
+// fn test_skip0() {
+//     works!(p_skip0, "", 0);
+//     works!(p_skip0, "a", 1);
+//     works!(p_skip0, " ", 0);
+//     works!(p_skip0, "   ", 0);
+//     works!(p_skip0, "\n", 0);
+//     works!(p_skip0, "   \n  \n\n  ", 0);
+//
+//     not_complete!(p_skip0, "\r");
+//     not_complete!(p_skip0, "\t");
+//
+//     not_complete!(p_skip0, "//");
+//     not_complete!(p_skip0, "// ");
+//
+//     works!(p_skip0, "//\n", 0);
+//     works!(p_skip0, "// \n", 0);
+//     works!(p_skip0, "///\n", 0);
+//     works!(p_skip0, "////\n", 0);
+//     works!(p_skip0, "//\n//\n", 0);
+//     works!(p_skip0, "//\na", 1);
+//     works!(p_skip0, "// \rö\n   \n    /// /\n  a", 1);
+// }
+//
+// #[test]
+// fn test_simple_id() {
+//     works!(p_simple_id, "_a", 0);
+//     works!(p_simple_id, "_a   ", 0);
+//     works!(p_simple_id, "a", 0);
+//     works!(p_simple_id, "A", 0);
+//     works!(p_simple_id, "aA", 0);
+//     works!(p_simple_id, "__", 0);
+//     works!(p_simple_id, "_9", 0);
+//     works!(p_simple_id, "a9", 0);
+//     works!(p_simple_id, "a_9", 0);
+//     works!(p_simple_id, "_aöa", 3);
+//     works!(p_simple_id,
+//            "abcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefg",
+//            0); // 127 characters
+//
+//     fails!(p_simple_id,
+//            "abcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefgh"); // 128 characters
+//     fails!(p_simple_id, "ö");
+//     fails!(p_simple_id, "_");
+//     fails!(p_simple_id, "-");
+//     fails!(p_simple_id, "9");
+//     fails!(p_simple_id, "9a");
+//     fails!(p_simple_id, "-a");
+//     fails!(p_simple_id, "");
+//
+//     fails!(p_simple_id, "pub");
+//     works!(p_simple_id, "pubb", 0);
+//     fails!(p_simple_id, "mod");
+//     fails!(p_simple_id, "use");
+//     fails!(p_simple_id, "self");
+//     fails!(p_simple_id, "extern");
+//     fails!(p_simple_id, "goto");
+//     fails!(p_simple_id, "label");
+//     fails!(p_simple_id, "break");
+//     fails!(p_simple_id, "return");
+//     fails!(p_simple_id, "while");
+//     fails!(p_simple_id, "match");
+//     fails!(p_simple_id, "if");
+//     fails!(p_simple_id, "then");
+//     fails!(p_simple_id, "else");
+//     fails!(p_simple_id, "let");
+//     fails!(p_simple_id, "as");
+//     fails!(p_simple_id, "type");
+//     fails!(p_simple_id, "macro");
+//     fails!(p_simple_id, "magic");
+//     fails!(p_simple_id, "attribute");
+//     fails!(p_simple_id, "mut");
+// }
+//
+// #[test]
+// fn test_id() {
+//     works!(p_id, "aö", 2);
+//     works!(p_id, "a::_a::__::t5ö", 2);
+//     works!(p_id, "a  ::  _a::__    ::  t5  ö", 2);
+//     fails!(p_id, "");
+// }
+//
+// #[cfg(test)]
+// macro_rules! test_int_lit {
+//     ($input:expr, $exp:expr) => {
+//         {
+//             match p_literal(Span::new($input)).unwrap() {
+//                 (_, Literal::Int(lit)) => {
+//                     assert_eq!(lit.0, $exp);
+//                     assert!(lit.1.is_none());
+//                 }
+//                 _ => panic!("Did not parse an integer literal"),
+//             }
+//         }
+//     }
+// }
+//
+// #[cfg(test)]
+// macro_rules! test_float_lit {
+//     ($input:expr, $exp:expr) => {
+//         {
+//             match p_literal(Span::new($input)).unwrap() {
+//                 (_, Literal::Float(lit)) => {
+//                     assert_eq!(lit.0, $exp);
+//                     assert!(lit.1.is_none());
+//                 }
+//                 _ => panic!("Did not parse a float literal"),
+//             }
+//         }
+//     }
+// }
+//
+// #[cfg(test)]
+// macro_rules! test_string_lit {
+//     ($input:expr, $exp:expr) => {
+//         {
+//             match p_literal(Span::new($input)).unwrap() {
+//                 (_, Literal::String(lit)) => {
+//                     assert_eq!(lit.0, $exp);
+//                 }
+//                 _ => panic!("Did not parse a string literal"),
+//             }
+//         }
+//     }
+// }
+//
+// #[test]
+// fn test_literal() {
+//     test_int_lit!("0ö", 0);
+//     test_int_lit!("_0 ", 0);
+//     test_int_lit!("0_ ", 0);
+//     test_int_lit!("012345 ", 12345);
+//     test_int_lit!("__01____23_45__ ", 12345);
+//     test_int_lit!("0b__001_01_ ", 0b__001_01_);
+//     test_int_lit!("0x123_ABF ", 0x123_ABF);
+//     works_check!(p_literal, "0U8 ", 0, Literal::Int(_));
+//     works_check!(p_literal, "0U16 ", 0, Literal::Int(_));
+//     works_check!(p_literal, "0U32 ", 0, Literal::Int(_));
+//     works_check!(p_literal, "0U64 ", 0, Literal::Int(_));
+//     works_check!(p_literal, "0USize ", 0, Literal::Int(_));
+//     works_check!(p_literal, "0x123I8 ", 0, Literal::Int(_));
+//     works_check!(p_literal, "0b01101_0110__1I16 ", 0, Literal::Int(_));
+//     works_check!(p_literal, "0I32 ", 0, Literal::Int(_));
+//     works_check!(p_literal, "0I64 ", 0, Literal::Int(_));
+//     works_check!(p_literal, "0ISize ", 0, Literal::Int(_));
+//
+//     fails!(p_literal, "-5 ");
+//     fails!(p_literal, "_ ");
+//     fails!(p_literal, "__ ");
+//     not_complete!(p_literal, "0b2 ");
+//     not_complete!(p_literal, "0xG ");
+//     not_complete!(p_literal, "0xf ");
+//     not_complete!(p_literal, "0F32 ");
+//
+//     test_float_lit!("0.0ö", 0.0);
+//     test_float_lit!("_0.0 ", 0.0);
+//     test_float_lit!("0_.0 ", 0_.0);
+//     test_float_lit!("0._0 ", 0.0);
+//     test_float_lit!("0.0_ ", 0.0_);
+//     test_float_lit!("0.0e42 ", 0.0e42);
+//     test_float_lit!("0.0e4_2 ", 0.0e4_2);
+//     test_float_lit!("0.0e+42 ", 0.0e+42);
+//     test_float_lit!("0.0e-42 ", 0.0e-42);
+//     test_float_lit!("00___0.0_00_0e-42 ", 00___0.0_00_0e-42);
+//     test_float_lit!("0._ ", 0.0);
+//     test_float_lit!("_.0 ", 0.0);
+//     test_float_lit!("0._e42 ", 0.0e42);
+//
+//     works_check!(p_literal, "0.0F32 ", 0, Literal::Float(_));
+//     works_check!(p_literal, "0.0F64 ", 0, Literal::Float(_));
+//     works_check!(p_literal, "0_00.00_0F64 ", 0, Literal::Float(_));
+//     works_check!(p_literal, "0.0e+42F32 ", 0, Literal::Float(_));
+//     works_check!(p_literal, "0.0e+42F64 ", 0, Literal::Float(_));
+//
+//     not_complete!(p_literal, "0. ");
+//     fails!(p_literal, ".0 ");
+//     not_complete!(p_literal, "0.0U32 ");
+//     fails!(p_literal, "-0.5 ");
+//     not_complete!(p_literal, "0.0e_ ");
+//     not_complete!(p_literal, "0e42 ");
+//
+//     test_string_lit!(r#""""#, "");
+//     test_string_lit!(r#""a""#, "a");
+//     test_string_lit!(r#""ö""#, "ö");
+//     test_string_lit!(r#""🦄""#, "🦄");
+//     test_string_lit!(r#""💂🏾""#, "💂🏾");
+//     test_string_lit!(r#""abc""#, "abc");
+//     test_string_lit!(r#""\"""#, "\"");
+//     test_string_lit!(r#""\\""#, "\\");
+//     test_string_lit!(r#""\n""#, "\n");
+//     test_string_lit!(r#""\t""#, "\t");
+//     test_string_lit!(r#""\0""#, "\0");
+//     test_string_lit!(r#""'""#, "'");
+//     test_string_lit!(r#""\x0F""#, "\x0F");
+//     test_string_lit!(r#""\u{0}""#, "\u{0}");
+//     test_string_lit!(r#""\u{A}""#, "\u{A}");
+//     test_string_lit!(r#""\u{012345}""#, "\u{012345}");
+//     test_string_lit!(r#""\x7AA""#, "\x7AA");
+//
+//     fails!(p_literal, r#"""#);
+//     fails!(p_literal, r#""\ö""#);
+//     fails!(p_literal, r#""\x""#);
+//     fails!(p_literal, r#""\xA""#);
+//     fails!(p_literal, r#""\xaa""#);
+//     fails!(p_literal, r#""\x80""#);
+//     fails!(p_literal, r#""\xG4""#);
+//     fails!(p_literal, r#""\x4G""#);
+//     fails!(p_literal, r#""\u""#);
+//     fails!(p_literal, r#""\u1234""#);
+//     fails!(p_literal, r#""\u{}""#);
+//     fails!(p_literal, r#""\u{""#);
+//     fails!(p_literal, r#""\u{0123456}""#);
+//     fails!(p_literal, r#""\u{a}""#);
+//     not_complete!(p_literal, r#"""""#);
+// }
+//
+// #[test]
+// fn test_meta_item() {
+//     works_check!(p_meta_item, "aö", 2, MetaItem::Nullary(_));
+//     works_check!(p_meta_item, "a = 42.0F32", 0, MetaItem::Pair(_, _, _));
+//     works_check!(p_meta_item, "a(42.0F32)", 0, MetaItem::LitArg(_, _, _));
+//     works_check!(p_meta_item, "a(b = 42 , c(d = \"\\\\\"))", 0, MetaItem::Args(_, _, _));
+// }
+//
+// #[test]
+// fn test_attributes() {
+//     works!(p_attributes, "#[a]#[a(b = 42 , c(d = \"\\\\\"))]", 0);
+//     fails!(p_attributes, "#[a::b]");
+// }
+//
+// #[test]
+// fn test_macro_invocation() {
+//     works!(p_macro_invocation, "$a()", 0);
+//     works!(p_macro_invocation, "$a(())", 0);
+//     works!(p_macro_invocation, "$a::b(a)", 0);
+//     works!(p_macro_invocation, "$a(j(f   e)wjf8--fhewf[{)", 0);
+//
+//     fails!(p_macro_invocation, "$a(ö");
+//     fails!(p_macro_invocation, "$a(()");
+//     not_complete!(p_macro_invocation, "$a())");
+// }
+//
+// #[test]
+// fn test_index() {
+//     works_check!(p_index, "0404", 0, Index::Literal(_));
+//     works_check!(p_index, "0404   ", 0, Index::Literal(_));
+//     works_check!(p_index, "$a()", 0, Index::Macro(_));
+//     works_check!(p_index, "$a()   ", 0, Index::Macro(_));
+// }
+//
+// #[test]
+// fn test_type() {
+//     // works!(p_type_list, "(#[foo]{a: r})", 0);
+//     //
+//     // works_check!(p_type, "@r ö", 2, Type::Ptr(_, _));
+//     // works_check!(p_type, "@ ( r  ) ö", 2, Type::Ptr(_, _));
+//     //
+//     // works_check!(p_type, "~(r, b) ö", 2, Type::PtrMut(_, _));
+//     // works_check!(p_type, "~ r ö", 2, Type::PtrMut(_, _));
+//     //
+//     // works_check!(p_type, "[r]", 0, Type::Array(_, _));
+//     // works_check!(p_type, "[ (r)]", 0, Type::Array(_, _));
+//     // works_check!(p_type, "[r ]", 0, Type::Array(_, _));
+//     //
+//     // works_check!(p_type, "#[foo] { r }", 0, Type::Attributed(_, _, _));
+//     // works_check!(p_type, "#[foo]{ r }", 0, Type::Attributed(_, _, _));
+//     // works_check!(p_type, "#[foo]  { r }", 0, Type::Attributed(_, _, _));
+//     // works_check!(p_type, "#[foo] {r }", 0, Type::Attributed(_, _, _));
+//     // works_check!(p_type, "#[foo] { r}", 0, Type::Attributed(_, _, _));
+//     // works_check!(p_type, "#[foo] #[bar] { r }", 0, Type::Attributed(_, _, _));
+//     //
+//     // works_check!(p_type, "(r; 42)", 0, Type::ProductRepeated(_, _, _));
+//     // works_check!(p_type, "( r; 42)", 0, Type::ProductRepeated(_, _, _));
+//     // works_check!(p_type, "((r) ; 42)", 0, Type::ProductRepeated(_, _, _));
+//     // works_check!(p_type, "(r;42)", 0, Type::ProductRepeated(_, _, _));
+//     // works_check!(p_type, "(r;  42)", 0, Type::ProductRepeated(_, _, _));
+//     // works_check!(p_type, "(r; 42 )", 0, Type::ProductRepeated(_, _, _));
+//     // works_check!(p_type, "(r; $a())", 0, Type::ProductRepeated(_, _, _));
+//     // fails!(p_type, "(r; 0b11)");
+//     //
+//     // works_check!(p_type, "$a()", 0, Type::MacroInv(_));
+//     //
+//     // works_check!(p_type, "()ö", 2, Type::Product(_, _));
+//     // works_check!(p_type, "( )ö", 2, Type::Product(_, _));
+//     // works_check!(p_type, "(r)ö", 2, Type::Product(_, _));
+//     // works_check!(p_type, "(#[foo]{r})ö", 2, Type::Product(_, _));
+//     // works_check!(p_type, "(r, r)ö", 2, Type::Product(_, _));
+//     // works_check!(p_type, "(#[foo]{r} , r)ö", 2, Type::Product(_, _));
+//     // works_check!(p_type, "(  r,  (r)  )ö", 2, Type::Product(_, _));
+//     // works_check!(p_type, "(r,r)ö", 2, Type::Product(_, _));
+//     // works_check!(p_type, "(r ,r)ö", 2, Type::Product(_, _));
+//     //
+//     // works_check!(p_type, "(a: @r)ö", 2, Type::Product(_, _));
+//     // works_check!(p_type, "(#[foo]{a: r})ö", 2, Type::Product(_, _));
+//     works_check!(p_type, "(a: r, a: r)ö", 2, Type::Product(_, _));
+//     works_check!(p_type, "(a: r,#[foo] {a: r  }  )ö", 2, Type::Product(_, _));
+//     works_check!(p_type, "( a: r,  A:  r )ö", 2, Type::Product(_, _));
+//     works_check!(p_type, "(a : (r))ö", 2, Type::Product(_, _));
+//     works_check!(p_type, "(a :r)ö", 2, Type::Product(_, _));
+//     works_check!(p_type, "(a: r , b: r)ö", 2, Type::Product(_, _));
+//     fails!(p_type, "(a: r,)");
+//
+//     works_check!(p_type, "() -> ()", 0, Type::Fun(_, _, _)); // TODO ö?
+//     works_check!(p_type, "() ->  r", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "() ->  #[foo]{r}", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "( ) -> r", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(r) -> r", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(#[foo]{r}) -> r", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(r, r) -> (r, r)", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(r, #[foo]{r}) -> (#[foo]{r}, r)", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(  r,  r  ) -> (r)", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(r,r) -> r", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(r ,r) -> r", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "()-> r", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "()  -> r", 0, Type::Fun(_, _, _));
+//     not_complete!(p_type, "() - r");
+//
+//     works_check!(p_type, "(a: r) -> r", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(#[foo]{a: r}) -> r", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(a: r, b: r) -> (r, r)", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(a: r, #[foo]{b: r}) -> (r, r)", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(  a:   r,  b: r  ) -> r", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(a: r)-> (r)", 0, Type::Fun(_, _, _));
+//     works_check!(p_type, "(a: r)  -> r", 0, Type::Fun(_, _, _));
+//     not_complete!(p_type, "(a: r) - r");
+//
+//     works_check!(p_type, "a", 0, Type::Id(_));
+//     works_check!(p_type, "a::b::c", 0, Type::Id(_));
+//
+//     works_check!(p_type, "a<b>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<(b, c)>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<#[foo]{b}>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a::b<c>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<  @b  >", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<b, c>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<#[foo]{b}, c>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<  b,  c  >", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<a,b>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<a ,b>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a  <  b  >", 0, Type::TypeApplication(_, _, _));
+//     not_complete!(p_type, "a<>");
+//     not_complete!(p_type, "a<   >");
+//
+//     works_check!(p_type, "a<b = y>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<#[foo] {b = y}>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a::b<c = z>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<  b   =  y  >", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<b = y, c = z>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<b = y,#[foo]{ c = z}>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<  b = y,  c = z  >", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<a= @x>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<a =x>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<a = x,b = y>", 0, Type::TypeApplication(_, _, _));
+//     works_check!(p_type, "a<a = x , b = y>", 0, Type::TypeApplication(_, _, _));
+// }
 
-    works_check!(p_literal, "0.0F32 ", 0, Literal::Float(_));
-    works_check!(p_literal, "0.0F64 ", 0, Literal::Float(_));
-    works_check!(p_literal, "0_00.00_0F64 ", 0, Literal::Float(_));
-    works_check!(p_literal, "0.0e+42F32 ", 0, Literal::Float(_));
-    works_check!(p_literal, "0.0e+42F64 ", 0, Literal::Float(_));
-
-    not_complete!(p_literal, "0. ");
-    fails!(p_literal, ".0 ");
-    not_complete!(p_literal, "0.0U32 ");
-    fails!(p_literal, "-0.5 ");
-    not_complete!(p_literal, "0.0e_ ");
-    not_complete!(p_literal, "0e42 ");
-
-    test_string_lit!(r#""""#, "");
-    test_string_lit!(r#""a""#, "a");
-    test_string_lit!(r#""ö""#, "ö");
-    test_string_lit!(r#""🦄""#, "🦄");
-    test_string_lit!(r#""💂🏾""#, "💂🏾");
-    test_string_lit!(r#""abc""#, "abc");
-    test_string_lit!(r#""\"""#, "\"");
-    test_string_lit!(r#""\\""#, "\\");
-    test_string_lit!(r#""\n""#, "\n");
-    test_string_lit!(r#""\t""#, "\t");
-    test_string_lit!(r#""\0""#, "\0");
-    test_string_lit!(r#""'""#, "'");
-    test_string_lit!(r#""\x0F""#, "\x0F");
-    test_string_lit!(r#""\u{0}""#, "\u{0}");
-    test_string_lit!(r#""\u{A}""#, "\u{A}");
-    test_string_lit!(r#""\u{012345}""#, "\u{012345}");
-    test_string_lit!(r#""\x7AA""#, "\x7AA");
-
-    fails!(p_literal, r#"""#);
-    fails!(p_literal, r#""\ö""#);
-    fails!(p_literal, r#""\x""#);
-    fails!(p_literal, r#""\xA""#);
-    fails!(p_literal, r#""\xaa""#);
-    fails!(p_literal, r#""\x80""#);
-    fails!(p_literal, r#""\xG4""#);
-    fails!(p_literal, r#""\x4G""#);
-    fails!(p_literal, r#""\u""#);
-    fails!(p_literal, r#""\u1234""#);
-    fails!(p_literal, r#""\u{}""#);
-    fails!(p_literal, r#""\u{""#);
-    fails!(p_literal, r#""\u{0123456}""#);
-    fails!(p_literal, r#""\u{a}""#);
-    not_complete!(p_literal, r#"""""#);
-}
-
-#[test]
-fn test_meta_item() {
-    works_check!(p_meta_item, "aö", 2, MetaItem::Nullary(_));
-    works_check!(p_meta_item, "a = 42.0F32", 0, MetaItem::Pair(_, _, _));
-    works_check!(p_meta_item, "a(42.0F32)", 0, MetaItem::LitArg(_, _, _));
-    works_check!(p_meta_item, "a(b = 42 , c(d = \"\\\\\"))", 0, MetaItem::Args(_, _, _));
-}
-
-#[test]
-fn test_macro_invocation() {
-    works!(p_macro_invocation, "$a()", 0);
-    works!(p_macro_invocation, "$a(())", 0);
-    works!(p_macro_invocation, "$a::b(a)", 0);
-    works!(p_macro_invocation, "$a(j(f   e)wjf8--fhewf[{)", 0);
-
-    fails!(p_macro_invocation, "$a(ö");
-    fails!(p_macro_invocation, "$a(()");
-    not_complete!(p_macro_invocation, "$a())");
-}
-
-#[test]
-fn test_index() {
-    works_check!(p_index, "0404", 0, Index::Literal(_));
-    works_check!(p_index, "0404   ", 0, Index::Literal(_));
-    works_check!(p_index, "$a()", 0, Index::Macro(_));
-    works_check!(p_index, "$a()   ", 0, Index::Macro(_));
-}
+// TODO remove modules (use one file per module instead)
+// TODO remove operators (use functions instead)
+// TODO allow let expressions without a right side `let foo;`
