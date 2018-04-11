@@ -95,6 +95,15 @@ pub enum TokenType {
     StringInvalidEscape,
 }
 
+impl TokenType {
+    pub fn is_id(&self) -> bool {
+        match self {
+            &TokenType::Id(_) => true,
+            _ => false,
+        }
+    }
+}
+
 impl Eq for TokenType {
     // Float literal never contains NaN, Inf or -Inf
 }

@@ -1,5 +1,26 @@
 use super::tokenizer::*;
 
+macro_rules! separated_list1 (
+    ($tokens:expr, $p_item:ident, $p_sep:ident) => {
+        {
+            let (mut tokens, item) = $p_item($tokens)?;
+            let mut items = vec![item];
+
+            loop {
+                match $p_sep(tokens) {
+                    Ok((new_tokens, _)) => {
+                        let (even_newer_tokens, item) = $p_item(new_tokens)?;
+                        items.push(item);
+                        tokens = even_newer_tokens;
+                    }
+
+                    Err(_) => break Ok((tokens, items))
+                }
+            }
+        }
+    }
+);
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct IntLiteral(pub u64, pub SourceRange);
 
@@ -45,32 +66,18 @@ impl SourceRanged for Literal {
     }
 }
 
-// pub fn p_literal(tokens: &[Token]) -> Result<(&[Token], Literal), &[Token]> {
-//     match tokens.get(0) {
-//         Some(&Token(TokenType::Int(int), range)) => {
-//             Ok((&tokens[1..], Literal::Int(IntLiteral(int, range))))
-//         }
-//         Some(&Token(TokenType::Float(float), range)) => {
-//             Ok((&tokens[1..], Literal::Float(FloatLiteral(float, range))))
-//         }
-//         Some(&Token(TokenType::String(ref string), range)) => {
-//             Ok((&tokens[1..], Literal::String(StringLiteral(string.clone(), range))))
-//         }
-//         _ => Err(tokens),
-//     }
-// }
-
-pub fn p_literal(tokens: &mut Tokenizer) -> Result<Literal, Option<Token>> {
-    match tokens.next() {
-        Some(Token(TokenType::Int(int), range)) => Ok(Literal::Int(IntLiteral(int, range))),
-        Some(Token(TokenType::Float(float), range)) => {
-            Ok(Literal::Float(FloatLiteral(float, range)))
+pub fn p_literal(tokens: &[Token]) -> Result<(&[Token], Literal), &[Token]> {
+    match tokens.get(0) {
+        Some(&Token(TokenType::Int(int), range)) => {
+            Ok((&tokens[1..], Literal::Int(IntLiteral(int, range))))
         }
-        Some(Token(TokenType::String(string), range)) => {
-            Ok(Literal::String(StringLiteral(string, range)))
+        Some(&Token(TokenType::Float(float), range)) => {
+            Ok((&tokens[1..], Literal::Float(FloatLiteral(float, range))))
         }
-        Some(t) => Err(Some(t)),
-        None => Err(None),
+        Some(&Token(TokenType::String(ref string), range)) => {
+            Ok((&tokens[1..], Literal::String(StringLiteral(string.clone(), range))))
+        }
+        _ => Err(tokens),
     }
 }
 
@@ -83,11 +90,12 @@ impl SourceRanged for SimpleIdentifier {
     }
 }
 
-pub fn p_sid(tokens: &mut Tokenizer) -> Result<SimpleIdentifier, Option<Token>> {
-    match tokens.next() {
-        Some(Token(TokenType::Id(id), range)) => Ok(SimpleIdentifier(id, range)),
-        Some(t) => Err(Some(t)),
-        None => Err(None),
+pub fn p_sid(tokens: &[Token]) -> Result<(&[Token], SimpleIdentifier), &[Token]> {
+    match tokens.get(0) {
+        Some(&Token(TokenType::Id(ref id), range)) => {
+            Ok((&tokens[1..], SimpleIdentifier(id.clone(), range)))
+        }
+        _ => Err(tokens),
     }
 }
 
@@ -100,34 +108,39 @@ impl SourceRanged for Identifier {
     }
 }
 
-pub fn p_id(tokens: &mut Tokenizer) -> Result<Identifier, Option<Token>> {
-    let mut sids = vec![];
+pub fn p_id(tokens: &[Token]) -> Result<(&[Token], Identifier), &[Token]> {
+    let (mut tokens, sid) = p_sid(tokens)?;
+    let mut sids = vec![sid];
 
     loop {
-        match tokens.next() {
-            Some(Token(TokenType::Id(id), range)) => sids.push(SimpleIdentifier(id, range)),
-            Some(t) => return Err(Some(t)),
-            None => return Err(None),
-        }
+        match consume(tokens, TokenType::Scope) {
+            Ok(new_tokens) => {
+                let (even_newer_tokens, sid) = p_sid(new_tokens)?;
+                sids.push(sid);
+                tokens = even_newer_tokens;
+            }
 
-        match tokens.peek() {
-            Some(&Token(TokenType::Scope, _)) => tokens.next(),
-            _ => {
+            Err(_) => {
                 let from = sids[0].source_range().from;
                 let to = sids[sids.len() - 1].source_range().to;
-
-                return Ok(Identifier(sids, SourceRange { from, to }));
+                return Ok((tokens, Identifier(sids, SourceRange { from, to })));
             }
-        };
+        }
     }
 }
 
 #[test]
 fn test_p_id() {
-    let mut tok = Tokenizer::new("abc:: \n  _d  :: __ :: _89");
-    let id = p_id(&mut tok).unwrap();
-
+    let tokens = tokenize("abc:: \n  _d  :: __ :: _89");
+    let (remaining, id) = p_id(&tokens[..]).unwrap();
     assert_eq!(id.0[0].0, "abc");
+    assert_eq!(id.0[1].0, "_d");
+    assert_eq!(id.0[2].0, "__");
+    assert_eq!(id.0[3].0, "_89");
+    assert_eq!(remaining, &[][..]);
+
+    assert!(p_id(&tokenize("")[..]).is_err(););
+    assert!(p_id(&tokenize("abc::")[..]).is_err(););
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -149,129 +162,120 @@ impl SourceRanged for MetaItem {
     }
 }
 
-// pub fn p_meta_item(tokens: &mut Tokenizer) -> Result<MetaItem, Option<Token>> {
-//     let sid = p_sid(tokens)?;
-//     let from = sid.source_range().from;
-//
-//     match tokens.peek() {
-//         Some(&Token(TokenType::Eq, _)) => {
-//             tokens.next();
-//             let lit = p_literal(tokens)?;
-//             let to = lit.source_range().to;
-//             return Ok(MetaItem::Pair(sid, lit, SourceRange { from, to }));
-//         }
-//
-//         Some(&Token(TokenType::LParen, _)) => {
-//             tokens.next();
-//
-//             match tokens.peek() {
-//                 Some(&Token(TokenType::Int(int), int_range)) => {
-//                     tokens.next();
-//                     let Token(_, SourceRange { from: _, to }) = tokens.consume(TokenType::RParen)?;
-//                     return Ok(MetaItem::LitArg(sid,
-//                                                Literal::Int(IntLiteral(int, int_range)),
-//                                                SourceRange { from, to }));
-//                 }
-//
-//                 Some(&Token(TokenType::Float(float), float_range)) => {
-//                     tokens.next();
-//                     let Token(_, SourceRange { from: _, to }) = tokens.consume(TokenType::RParen)?;
-//                     return Ok(MetaItem::LitArg(sid,
-//                                                Literal::Float(FloatLiteral(float, float_range)),
-//                                                SourceRange { from, to }));
-//                 }
-//
-//                 Some(&Token(TokenType::String(ref string), string_range)) => {
-//                     match tokens.next() {
-//                         Some(Token(TokenType::String(string), string_range)) => {
-//                             let Token(_, SourceRange { from: _, to }) =
-//                                 tokens.consume(TokenType::RParen)?;
-//                             return Ok(MetaItem::LitArg(sid,
-//                                                        Literal::String(StringLiteral(string,
-//                                                                                      string_range)),
-//                                                        SourceRange { from, to }));
-//                         }
-//                         _ => unreachable!(),
-//                     }
-//                 }
-//
-//                 Some(&Token(TokenType::Id(_), _)) => {
-//                     let mut args = vec![];
-//
-//                     loop {
-//                         match p_meta_item(tokens) {
-//                             Ok(attr) => args.push(attr),
-//                             Err(Some(Token(TokenType::RParen, SourceRange { from: _, to }))) => {
-//                                 return Ok(MetaItem::Args(sid, args, SourceRange { from, to }))
-//                             }
-//                             Err(Some(t)) => return Err(Some(t)),
-//                             Err(None) => return Err(None),
-//                         }
-//                     }
-//                 }
-//
-//                 _ => unimplemented!(), // TODO errors
-//             }
-//         }
-//
-//         _ => return Ok(MetaItem::Nullary(sid)),
-//     }
-// }
-//
-// #[test]
-// fn test_meta_item() {
-//     let mut tok = Tokenizer::new("abc");
-//     match p_meta_item(&mut tok).unwrap() {
-//         MetaItem::Nullary(sid) => assert_eq!(sid.0, "abc"),
-//         _ => panic!(),
-//     }
-//
-//     let mut tok = Tokenizer::new("abc = 12.34");
-//     match p_meta_item(&mut tok).unwrap() {
-//         MetaItem::Pair(sid, Literal::Float(lit), _) => {
-//             assert_eq!(sid.0, "abc");
-//             assert_eq!(lit.0, 12.34);
-//         }
-//         _ => panic!(),
-//     }
-//
-//     let mut tok = Tokenizer::new("abc(12.34)");
-//     match p_meta_item(&mut tok).unwrap() {
-//         MetaItem::LitArg(sid, Literal::Float(lit), _) => {
-//             assert_eq!(sid.0, "abc");
-//             assert_eq!(lit.0, 12.34);
-//         }
-//         _ => panic!(),
-//     }
-//
-//     let mut tok = Tokenizer::new("a(b = 42 , c(d = 12.34))");
-//     match p_meta_item(&mut tok).unwrap() {
-//         MetaItem::Args(ref sid, ref args, _) => {
-//             assert_eq!(sid.0, "a");
-//             match args[0] {
-//                 MetaItem::Pair(ref sid, Literal::Int(ref lit), _) => {
-//                     assert_eq!(sid.0, "b");
-//                     assert_eq!(lit.0, 42);
-//                 }
-//                 _ => panic!(),
-//             }
-//
-//             match args[1] {
-//                 MetaItem::Args(ref sid, ref args, _) => {
-//                     assert_eq!(sid.0, "a");
-//                     match args[0] {
-//                         MetaItem::Pair(ref sid, Literal::Float(ref lit), _) => {
-//                             assert_eq!(sid.0, "d");
-//                             assert_eq!(lit.0, 12.34);
-//                         }
-//                         _ => panic!(),
-//                     }
-//                 }
-//                 _ => panic!(),
-//             }
-//         }
-//         _ => panic!(),
-//     }
-// }
+pub fn p_meta_item(tokens: &[Token]) -> Result<(&[Token], MetaItem), &[Token]> {
+    let (tokens, sid) = p_sid(tokens)?;
+    let from = sid.source_range().from;
+
+    if let Ok(tokens) = consume(tokens, TokenType::Eq) {
+        let (tokens, lit) = p_literal(tokens)?;
+        let to = lit.source_range().to;
+        return Ok((tokens, MetaItem::Pair(sid, lit, SourceRange { from, to })));
+    } else if let Ok(tokens) = consume(tokens, TokenType::LParen) {
+        if let Ok((tokens, lit)) = p_literal(tokens) {
+            let (tokens, to) = consume_to(tokens, TokenType::RParen)?;
+            return Ok((tokens, MetaItem::LitArg(sid, lit, SourceRange { from, to })));
+        }
+
+        let (tokens, args) = separated_list1!(tokens, p_meta_item, p_comma)?;
+        let (tokens, to) = consume_to(tokens, TokenType::RParen)?;
+        return Ok((tokens, MetaItem::Args(sid, args, SourceRange { from, to })));
+    } else {
+        return Ok((tokens, MetaItem::Nullary(sid)));
+    }
+}
+
+#[test]
+fn test_meta_item() {
+    let tokens = tokenize("abc");
+    let (remaining, meta) = p_meta_item(&tokens[..]).unwrap();
+    match meta {
+        MetaItem::Nullary(sid) => assert_eq!(sid.0, "abc"),
+        _ => panic!(),
+    }
+    assert_eq!(remaining, &[][..]);
+
+    let tokens = tokenize("abc = 12.34");
+    let (remaining, meta) = p_meta_item(&tokens[..]).unwrap();
+    match meta {
+        MetaItem::Pair(sid, Literal::Float(lit), _) => {
+            assert_eq!(sid.0, "abc");
+            assert_eq!(lit.0, 12.34);
+        }
+        _ => panic!(),
+    }
+    assert_eq!(remaining, &[][..]);
+
+    let tokens = tokenize("abc(\"foo\")");
+    let (remaining, meta) = p_meta_item(&tokens[..]).unwrap();
+    match meta {
+        MetaItem::LitArg(sid, Literal::String(lit), _) => {
+            assert_eq!(sid.0, "abc");
+            assert_eq!(lit.0, "foo");
+        }
+        _ => panic!(),
+    }
+    assert_eq!(remaining, &[][..]);
+
+    let tokens = tokenize("a(b = 42 , c(d = 12.34))");
+    let (remaining, meta) = p_meta_item(&tokens[..]).unwrap();
+    match meta {
+        MetaItem::Args(ref sid, ref args, _) => {
+            assert_eq!(sid.0, "a");
+            match args[0] {
+                MetaItem::Pair(ref sid, Literal::Int(ref lit), _) => {
+                    assert_eq!(sid.0, "b");
+                    assert_eq!(lit.0, 42);
+                }
+                _ => panic!(),
+            }
+
+            match args[1] {
+                MetaItem::Args(ref sid, ref args, _) => {
+                    assert_eq!(sid.0, "c");
+                    match args[0] {
+                        MetaItem::Pair(ref sid, Literal::Float(ref lit), _) => {
+                            assert_eq!(sid.0, "d");
+                            assert_eq!(lit.0, 12.34);
+                        }
+                        _ => panic!(),
+                    }
+                }
+                _ => panic!(),
+            }
+        }
+        _ => panic!(),
+    }
+    assert_eq!(remaining, &[][..]);
+}
+
+fn consume(tokens: &[Token], tt: TokenType) -> Result<&[Token], &[Token]> {
+    match tokens.get(0) {
+        Some(token) => {
+            if token.0 == tt {
+                Ok(&tokens[1..])
+            } else {
+                Err(tokens)
+            }
+        }
+        None => Err(tokens),
+    }
+}
+
+fn consume_to(tokens: &[Token], tt: TokenType) -> Result<(&[Token], Position), &[Token]> {
+    match tokens.get(0) {
+        Some(token) => {
+            if token.0 == tt {
+                Ok((&tokens[1..], token.source_range().to))
+            } else {
+                Err(tokens)
+            }
+        }
+        None => Err(tokens),
+    }
+}
+
+pub fn p_comma(tokens: &[Token]) -> Result<(&[Token], Position), &[Token]> {
+    consume_to(tokens, TokenType::Comma)
+}
 
 // unimplemented!() TODO remove this line...
